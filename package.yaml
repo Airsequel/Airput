@@ -1,0 +1,57 @@
+name: haskell-repos
+version: 0.1.0.0
+synopsis: |
+  Download all Haskell repositories from GitHub and save them to Airsequel
+description: |
+  For more information check out the readme.
+homepage: https://github.com/ad-si/haskell-repos#readme
+license: AGPL-3.0-or-later
+author: Adrian Sieber
+maintainer: mail@adriansieber.com
+copyright: Adrian Sieber
+category: Web
+
+extra-source-files:
+  - readme.md
+
+dependencies:
+  - aeson
+  - base
+  - protolude
+  - raw-strings-qq
+  - text
+  - http-link-header
+  - network-uri
+  - time
+
+default-extensions:
+  - ImportQualifiedPost
+  - NoImplicitPrelude
+  - OverloadedRecordDot
+  - OverloadedStrings
+
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -Wincomplete-record-updates
+  - -Wincomplete-uni-patterns
+  - -Wredundant-constraints
+  - -fno-warn-orphans
+
+library:
+  language: GHC2021
+  source-dirs: source
+  dependencies:
+    - http-client-tls
+    - http-client
+    - github
+
+executables:
+  haskell-repos:
+    language: GHC2021
+    source-dirs: app
+    main: Main.hs
+    dependencies:
+      - http-client-tls
+      - http-client
+      - github

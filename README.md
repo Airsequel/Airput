@@ -1,8 +1,10 @@
-# haskell-repos
+# Haskell Repos
 
-[![GitHub CI](https://github.com/ad-si/haskell-repos/workflows/CI/badge.svg)](https://github.com/ad-si/haskell-repos/actions)
-[![Hackage](https://img.shields.io/hackage/v/haskell-repos.svg?logo=haskell)](https://hackage.haskell.org/package/haskell-repos)
-[![Stackage Lts](http://stackage.org/package/haskell-repos/badge/lts)](http://stackage.org/lts/package/haskell-repos)
-[![Stackage Nightly](http://stackage.org/package/haskell-repos/badge/nightly)](http://stackage.org/nightly/package/haskell-repos)
+Load metadata for all Haskell repositories on GitHub and store it in Airsequel.
 
-See README for more info
+
+## Related
+
+- [GrimoireLab] - Open source tools for software development analytics.
+
+[GrimoireLab]: http://chaoss.github.io/grimoirelab/
