@@ -4,17 +4,17 @@ cabal-version: 2.2
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: a056babab5004ab1b5703fca4e303777b0644be275bee04bb4ef61ac2cfb7ffb
+-- hash: edf1d0e842d7eb15d2887b590795f9ed4d1528afca430e992664b2334bc47242
 
-name:           haskell-repos
-version:        0.1.0.0
-synopsis:       Download all Haskell repositories from GitHub and save them to Airsequel
+name:           repos-uploader
+version:        0.0.0.0
+synopsis:       Download metadata for a list of GitHub repos and save it to Airsequel
 
 description:    For more information check out the readme.
 category:       Web
-homepage:       https://github.com/ad-si/haskell-repos#readme
+homepage:       https://github.com/Airsequel/repos-uploader#readme
 author:         Adrian Sieber
-maintainer:     mail@adriansieber.com
+maintainer:     adrian@feram.io
 copyright:      Adrian Sieber
 license:        AGPL-3.0-or-later
 build-type:     Simple
@@ -25,9 +25,9 @@ library
   exposed-modules:
       Lib
   other-modules:
-      Paths_haskell_repos
+      Paths_repos_uploader
   autogen-modules:
-      Paths_haskell_repos
+      Paths_repos_uploader
   hs-source-dirs:
       source
   default-extensions:
@@ -50,12 +50,12 @@ library
     , time
   default-language: GHC2021
 
-executable haskell-repos
+executable repos-uploader
   main-is: Main.hs
   other-modules:
-      Paths_haskell_repos
+      Paths_repos_uploader
   autogen-modules:
-      Paths_haskell_repos
+      Paths_repos_uploader
   hs-source-dirs:
       app
   default-extensions:

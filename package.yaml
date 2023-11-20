@@ -1,13 +1,13 @@
-name: haskell-repos
-version: 0.1.0.0
+name: repos-uploader
+version: 0.0.0.0
 synopsis: |
-  Download all Haskell repositories from GitHub and save them to Airsequel
+  Download metadata for a list of GitHub repos and save it to Airsequel
 description: |
   For more information check out the readme.
-homepage: https://github.com/ad-si/haskell-repos#readme
+homepage: https://github.com/Airsequel/repos-uploader#readme
 license: AGPL-3.0-or-later
 author: Adrian Sieber
-maintainer: mail@adriansieber.com
+maintainer: adrian@feram.io
 copyright: Adrian Sieber
 category: Web
 
@@ -47,7 +47,7 @@ library:
     - github
 
 executables:
-  haskell-repos:
+  repos-uploader:
     language: GHC2021
     source-dirs: app
     main: Main.hs

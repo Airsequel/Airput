@@ -152,7 +152,7 @@ getNumberOfCommits repo = do
   let request =
         initialRequest
           { method = "HEAD"
-          , requestHeaders = [("User-Agent", "haskell-repos")]
+          , requestHeaders = [("User-Agent", "repos-uploader")]
           }
 
   response <- httpLbs request manager
@@ -180,7 +180,7 @@ insertRepoQuery extendedRepo =
       mutation {
         insert_repos(objects: [
           {
-            owner: "{{name}}"
+            owner: "{{owner}}"
             name: "{{name}}"
             description: "{{description}}"
             homepage: "{{homepage}}"
@@ -242,7 +242,7 @@ saveRepoInAirsequel extendedRepo = do
 
 main :: IO ()
 main = do
-  possibleRepo <- GH.github () GH.repositoryR "ad-si" "haskell-repos"
+  possibleRepo <- GH.github () GH.repositoryR "Airsequel" "SQLiteDAV"
   case possibleRepo of
     Left error ->
       putErrText $ "Error: " <> show error

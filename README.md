@@ -1,6 +1,6 @@
-# Haskell Repos
+# Repos Uploader
 
-Load metadata for all Haskell repositories on GitHub and store it in Airsequel.
+Load metadata for a list of GitHub repos and store it in Airsequel.
 
 
 ## Related
