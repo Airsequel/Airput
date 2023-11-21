@@ -4,7 +4,7 @@ cabal-version: 2.2
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: d8c7ea98d1b7d2a39392e05c7048b9f8f54bf3b52a01a408ef7b0a12540cb7ad
+-- hash: 490342bfbe157db93933ef67d7545824abe9227ba1f9a84434f7fe37c1a70072
 
 name:           repos-uploader
 version:        0.0.0.0
@@ -35,6 +35,7 @@ library
       NoImplicitPrelude
       OverloadedRecordDot
       OverloadedStrings
+      RecordWildCards
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -fno-warn-orphans
   build-depends:
       aeson
@@ -64,6 +65,7 @@ executable repos-uploader
       NoImplicitPrelude
       OverloadedRecordDot
       OverloadedStrings
+      RecordWildCards
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -fno-warn-orphans
   build-depends:
       aeson

@@ -11,10 +11,8 @@ import Protolude (
   Eq,
   Generic,
   IO,
-  Int,
   Integer,
   Maybe (..),
-  Proxy (Proxy),
   Show,
   Text,
   elem,
@@ -80,7 +78,7 @@ import Network.URI (URI)
 import System.Environment (lookupEnv)
 import Text.RawString.QQ (r)
 
-import Utils (emptyOwner, emptyRepo, mapMSequentially)
+import Utils (RepoObject, mapMSequentially, repoObjectToRepo)
 
 -- | Replaces a variable in a string with a value
 var :: Text -> Text -> Text -> Text
@@ -144,22 +142,6 @@ formatRepo extendedRepo =
             <> (repo & GH.repoUpdatedAt <&> show & fromMaybe "")
             <> "\n"
          )
-
--- queryRepos :: Text
--- queryRepos =
---   [r|
---     query reposQuery {
---       repos( limit: 100 ) {
---         rowid
---         id
---         name
---         language
---         url
---         stars
---         updated_utc
---       }
---     }
---   |]
 
 -- | Query @Link@ header with @rel=last@ from the request headers
 getLastUrl :: Response a -> Maybe URI
@@ -275,7 +257,7 @@ upsertRepoQuery utc extendedRepo =
       & var
         "language"
         (repo & GH.repoLanguage <&> GH.getLanguage & fromMaybe "")
-      & var "stargazers_count" (repo & GH.repoWatchersCount & show)
+      & var "stargazers_count" (repo & GH.repoStargazersCount & show)
       & var "open_issues_count" (repo & GH.repoOpenIssuesCount & show)
       & var "commits_count" (commitsCount & fromMaybe 0 & show)
       & var "created_utc" (getTimestamp GH.repoCreatedAt)
@@ -325,7 +307,7 @@ insertRepoQuery utc extendedRepo =
       & var
         "language"
         (repo & GH.repoLanguage <&> GH.getLanguage & fromMaybe "")
-      & var "stargazers_count" (repo & GH.repoWatchersCount & show)
+      & var "stargazers_count" (repo & GH.repoStargazersCount & show)
       & var "open_issues_count" (repo & GH.repoOpenIssuesCount & show)
       & var "commits_count" (commitsCount & fromMaybe 0 & show)
       & var "created_utc" (getTimestamp GH.repoCreatedAt)
@@ -400,23 +382,8 @@ loadAndSaveRepo saveStrategy owner name = do
       putText $ formatRepo extendedRepo
       saveRepoInAirsequel saveStrategy extendedRepo
 
-data RepoObject = RepoObject
-  { owner :: Text
-  , name :: Text
-  , githubId :: Int
-  }
-  deriving (Show, Eq, Generic)
-
-instance FromJSON RepoObject where
-  parseJSON = withObject "RepoObject" $ \o -> do
-    ownerObj <- o .: "owner"
-    owner <- ownerObj .: "login"
-    name <- o .: "name"
-    githubId <- o .: "databaseId"
-    pure RepoObject{owner, name, githubId}
-
 data GqlResponse = GqlResponse
-  { repos :: [RepoObject]
+  { repos :: [Repo]
   , errorsMb :: Maybe Value
   , nextCursorMb :: Maybe Text
   }
@@ -428,12 +395,17 @@ instance FromJSON GqlResponse where
     errorsMb <- o .:? "errors"
     search <- data_ .: "search"
     edges <- search .: "edges"
-    repos <- edges & mapM (.: "node")
+    repos :: [RepoObject] <- edges & mapM (.: "node")
 
     pageInfo <- search .: "pageInfo"
     nextCursorMb <- pageInfo .:? "endCursor"
 
-    pure GqlResponse{repos, errorsMb, nextCursorMb}
+    pure
+      GqlResponse
+        { repos = repos <&> repoObjectToRepo
+        , errorsMb
+        , nextCursorMb
+        }
 
 execGqlQuery ::
   Text ->
@@ -485,22 +457,15 @@ execGqlQuery apiEndpoint tokenMb query nextCursorMb initialRepos = do
         Just errors -> putErrText $ "GraphQL Errors:\n" <> show errors
         Nothing -> pure ()
 
-      let repos :: [GH.Repo] =
-            gqlResponse.repos <&> \repoObj ->
-              emptyRepo
-                { GH.repoOwner =
-                    emptyOwner
-                      { GH.simpleOwnerLogin =
-                          GH.mkOwnerName repoObj.owner
-                      }
-                , GH.repoName = GH.mkRepoName repoObj.name
-                , GH.repoId =
-                    GH.mkId
-                      (Proxy :: Proxy GH.Repo)
-                      repoObj.githubId
-                }
-
-      commitsCounts <- mapMSequentially 1000 getNumberOfCommits repos
+      let
+        repos :: [GH.Repo] = gqlResponse.repos
+        -- Number must be quite high to avoid rate limiting
+        delayBetweenRequests = 20000 -- ms
+      commitsCounts <-
+        mapMSequentially
+          delayBetweenRequests
+          getNumberOfCommits
+          repos
 
       let extendedRepos =
             P.zipWith
@@ -512,6 +477,12 @@ execGqlQuery apiEndpoint tokenMb query nextCursorMb initialRepos = do
               )
               repos
               commitsCounts
+
+      putText
+        $ "⏳ Save "
+        <> show (P.length repos)
+        <> " repos to Airsequel …"
+      extendedRepos & mapM_ (saveRepoInAirsequel OverwriteRepo)
 
       case gqlResponse.nextCursorMb of
         Nothing -> pure $ initialRepos <> extendedRepos
@@ -531,7 +502,7 @@ getReposViaSearch githubToken searchQuery = do
             search(
               query: "<<searchQuery>>",
               type: REPOSITORY,
-              first: 100
+              first: 20
               <<optionalAfter>>
             ) {
               edges {
@@ -540,6 +511,16 @@ getReposViaSearch githubToken searchQuery = do
                     owner { login }
                     name
                     databaseId
+                    stargazerCount
+                    createdAt
+                    description
+                    homepageUrl
+                    name
+                    issues (states: [OPEN]) {
+                      totalCount
+                    }
+                    createdAt
+                    updatedAt
                   }
                 }
               }
@@ -565,10 +546,12 @@ main = do
   -- TODO: Add CLI flag to load and save a single repo
   -- loadAndSaveRepo OverwriteRepo "Airsequel" "SQLiteDAV"
 
+  -- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
+
   repos <-
     getReposViaSearch
       githubTokenMb
-      "language:haskell stars:>500 sort:stars-desc"
+      "language:haskell stars:>200 sort:updated-desc"
 
   putText $ "Found " <> show (P.length repos) <> " repos:"
   repos
@@ -580,9 +563,5 @@ main = do
               <> show repo.commitsCount
         )
     & mapM_ putText
-
-  putText $ "⏳ Save " <> show (P.length repos) <> " repos to Airsequel …"
-  -- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
-  repos & mapM_ (saveRepoInAirsequel OverwriteRepo)
 
   pure ()

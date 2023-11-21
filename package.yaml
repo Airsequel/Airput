@@ -29,6 +29,7 @@ default-extensions:
   - NoImplicitPrelude
   - OverloadedRecordDot
   - OverloadedStrings
+  - RecordWildCards
 
 ghc-options:
   - -Wall
