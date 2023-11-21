@@ -4,7 +4,7 @@ cabal-version: 2.2
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: edf1d0e842d7eb15d2887b590795f9ed4d1528afca430e992664b2334bc47242
+-- hash: d8c7ea98d1b7d2a39392e05c7048b9f8f54bf3b52a01a408ef7b0a12540cb7ad
 
 name:           repos-uploader
 version:        0.0.0.0
@@ -53,6 +53,7 @@ library
 executable repos-uploader
   main-is: Main.hs
   other-modules:
+      Utils
       Paths_repos_uploader
   autogen-modules:
       Paths_repos_uploader
