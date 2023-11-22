@@ -104,8 +104,8 @@ loadDbEndpoint = do
   dbId <- loadDbId
   pure $ "https://www.airsequel.com/dbs/" <> dbId <> "/graphql"
 
-loadWriteToken :: IO Text
-loadWriteToken =
+loadAsWriteToken :: IO Text
+loadAsWriteToken =
   lookupEnv "AIRSEQUEL_API_TOKEN" <&> (fromMaybe "" >>> T.pack)
 
 loadGitHubToken :: IO (Maybe Text)
@@ -161,8 +161,8 @@ getLastUrl req = do
 {- | Workaround to get the number of commits for a repo
 | https://stackoverflow.com/a/70610670
 -}
-getNumberOfCommits :: Repo -> IO (Maybe Integer)
-getNumberOfCommits repo = do
+getNumberOfCommits :: Maybe Text -> Repo -> IO (Maybe Integer)
+getNumberOfCommits ghTokenMb repo = do
   let repoSlug =
         (repo & GH.repoOwner & GH.simpleOwnerLogin & untagName)
           <> "/"
@@ -178,7 +178,7 @@ getNumberOfCommits repo = do
   let request =
         initialRequest
           { method = "HEAD"
-          , requestHeaders = [("User-Agent", "repos-uploader")]
+          , requestHeaders = getGhHeaders ghTokenMb
           }
 
   response <- httpLbs request manager
@@ -239,7 +239,7 @@ upsertRepoQuery utc extendedRepo =
             language: "<<language>>"
             stargazers_count: <<stargazers_count>>
             open_issues_count: <<open_issues_count>>
-            commits_count: <<commits_count>>
+            <<commits_count>>
             created_utc: "<<created_utc>>"
             updated_utc: "<<updated_utc>>"
             crawled_utc: "<<crawled_utc>>"
@@ -259,7 +259,12 @@ upsertRepoQuery utc extendedRepo =
         (repo & GH.repoLanguage <&> GH.getLanguage & fromMaybe "")
       & var "stargazers_count" (repo & GH.repoStargazersCount & show)
       & var "open_issues_count" (repo & GH.repoOpenIssuesCount & show)
-      & var "commits_count" (commitsCount & fromMaybe 0 & show)
+      & var
+        "commits_count"
+        ( case commitsCount of
+            Just count -> "commits_count: " <> show count
+            Nothing -> ""
+        )
       & var "created_utc" (getTimestamp GH.repoCreatedAt)
       & var "updated_utc" (getTimestamp GH.repoUpdatedAt)
       & var "crawled_utc" utc
@@ -318,7 +323,7 @@ insertRepoQuery utc extendedRepo =
 saveRepoInAirsequel :: SaveStrategy -> ExtendedRepo -> IO ()
 saveRepoInAirsequel saveStrategy extendedRepo = do
   dbEndpoint <- loadDbEndpoint
-  writeToken <- loadWriteToken
+  airseqWriteToken <- loadAsWriteToken
 
   manager <- newManager tlsManagerSettings
 
@@ -333,7 +338,10 @@ saveRepoInAirsequel saveStrategy extendedRepo = do
             { method = "POST"
             , requestHeaders =
                 [ ("Content-Type", "application/json")
-                , ("Authorization", "Bearer " <> writeToken & encodeUtf8)
+                ,
+                  ( "Authorization"
+                  , "Bearer " <> airseqWriteToken & encodeUtf8
+                  )
                 ]
             , requestBody =
                 RequestBodyLBS
@@ -349,7 +357,7 @@ saveRepoInAirsequel saveStrategy extendedRepo = do
           { method = "POST"
           , requestHeaders =
               [ ("Content-Type", "application/json")
-              , ("Authorization", "Bearer " <> writeToken & encodeUtf8)
+              , ("Authorization", "Bearer " <> airseqWriteToken & encodeUtf8)
               ]
           , requestBody =
               RequestBodyLBS
@@ -362,8 +370,8 @@ saveRepoInAirsequel saveStrategy extendedRepo = do
 {- | Loads a single repo from GitHub, adds number of commits,
 | and saves it to Airsequel
 -}
-loadAndSaveRepo :: SaveStrategy -> Text -> Text -> IO ()
-loadAndSaveRepo saveStrategy owner name = do
+loadAndSaveRepo :: Maybe Text -> SaveStrategy -> Text -> Text -> IO ()
+loadAndSaveRepo ghTokenMb saveStrategy owner name = do
   repoResult <-
     GH.github'
       GH.repositoryR
@@ -373,7 +381,7 @@ loadAndSaveRepo saveStrategy owner name = do
   case repoResult of
     Left error -> putErrText $ "Error: " <> show error
     Right repo -> do
-      commitsCount <- getNumberOfCommits repo
+      commitsCount <- getNumberOfCommits ghTokenMb repo
       let extendedRepo =
             ExtendedRepo
               { core = repo
@@ -407,6 +415,17 @@ instance FromJSON GqlResponse where
         , nextCursorMb
         }
 
+getGhHeaders :: (P.IsString a) => Maybe Text -> [(a, P.ByteString)]
+getGhHeaders tokenMb =
+  [ ("User-Agent", "repos-uploader")
+  , ("Accept", "application/vnd.github+json")
+  , ("X-GitHub-Api-Version", "2022-11-28")
+  ]
+    <> case tokenMb of
+      Just token ->
+        [("Authorization", "Bearer " <> token & encodeUtf8)]
+      Nothing -> []
+
 execGqlQuery ::
   Text ->
   Maybe Text ->
@@ -414,21 +433,14 @@ execGqlQuery ::
   Maybe Text ->
   [ExtendedRepo] ->
   IO [ExtendedRepo]
-execGqlQuery apiEndpoint tokenMb query nextCursorMb initialRepos = do
+execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
   manager <- newManager tlsManagerSettings
 
   initialRequest <- parseRequest $ T.unpack apiEndpoint
   let request =
         initialRequest
           { method = "POST"
-          , requestHeaders =
-              [ ("User-Agent", "repos-uploader")
-              , ("Content-Type", "application/json")
-              ]
-                <> case tokenMb of
-                  Just token ->
-                    [("Authorization", "Bearer " <> token & encodeUtf8)]
-                  Nothing -> []
+          , requestHeaders = getGhHeaders ghTokenMb
           , requestBody =
               RequestBodyLBS
                 $ encode
@@ -459,12 +471,11 @@ execGqlQuery apiEndpoint tokenMb query nextCursorMb initialRepos = do
 
       let
         repos :: [GH.Repo] = gqlResponse.repos
-        -- Number must be quite high to avoid rate limiting
-        delayBetweenRequests = 20000 -- ms
+        delayBetweenRequests = 2000 -- ms
       commitsCounts <-
         mapMSequentially
           delayBetweenRequests
-          getNumberOfCommits
+          (getNumberOfCommits ghTokenMb)
           repos
 
       let extendedRepos =
@@ -489,7 +500,7 @@ execGqlQuery apiEndpoint tokenMb query nextCursorMb initialRepos = do
         Just nextCursor -> do
           execGqlQuery
             apiEndpoint
-            tokenMb
+            ghTokenMb
             query
             (Just nextCursor)
             (initialRepos <> extendedRepos)
@@ -541,16 +552,16 @@ getReposViaSearch githubToken searchQuery = do
 
 main :: IO ()
 main = do
-  githubTokenMb <- loadGitHubToken
+  ghTokenMb <- loadGitHubToken
 
   -- TODO: Add CLI flag to load and save a single repo
-  -- loadAndSaveRepo OverwriteRepo "Airsequel" "SQLiteDAV"
+  -- loadAndSaveRepo ghTokenMb OverwriteRepo "Airsequel" "SQLiteDAV"
 
   -- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
 
   repos <-
     getReposViaSearch
-      githubTokenMb
+      ghTokenMb
       "language:haskell stars:>200 sort:updated-desc"
 
   putText $ "Found " <> show (P.length repos) <> " repos:"
