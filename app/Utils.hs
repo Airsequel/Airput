@@ -17,12 +17,10 @@ import Protolude (
   Proxy (Proxy),
   Show,
   Text,
-  fromMaybe,
   liftIO,
   mapM,
   pure,
   ($),
-  (&),
   (*),
   (<*),
   (>>=),
@@ -31,9 +29,7 @@ import Protolude (
 import Control.Concurrent (threadDelay)
 import Data.Aeson (FromJSON, withObject, (.:))
 import Data.Aeson.Types (parseJSON)
-import Data.Text qualified as T
 import Data.Time (UTCTime)
-import Data.Time.Format.ISO8601 (iso8601Show)
 import GitHub.Data qualified as GH
 
 emptyOwner :: GH.SimpleOwner
@@ -99,6 +95,7 @@ data RepoObject = RepoObject
   , description :: Maybe Text
   , homepageUrl :: Maybe Text
   , issuesCount :: Int
+  , isArchived :: Bool
   , createdAt :: UTCTime
   , updatedAt :: UTCTime
   }
@@ -113,6 +110,7 @@ instance FromJSON RepoObject where
     description <- o .: "description"
     homepageUrl <- o .: "homepageUrl"
     issuesCount <- o .: "issues" >>= (.: "totalCount")
+    isArchived <- o .: "isArchived"
     createdAt <- o .: "createdAt"
     updatedAt <- o .: "updatedAt"
 
@@ -132,6 +130,7 @@ repoObjectToRepo repoObj =
     , GH.repoDescription = repoObj.description
     , GH.repoStargazersCount = repoObj.stargazerCount
     , GH.repoOpenIssuesCount = repoObj.issuesCount
+    , GH.repoArchived = repoObj.isArchived
     , GH.repoCreatedAt = Just repoObj.createdAt
     , GH.repoUpdatedAt = Just repoObj.updatedAt
     }

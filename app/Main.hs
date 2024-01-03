@@ -120,12 +120,12 @@ formatRepo extendedRepo =
     "\n\n"
       <> ("repo_url: " <> show (GH.repoHtmlUrl repo) <> "\n")
       <> ( "description: "
-            <> (repo & GH.repoDescription & fromMaybe "")
+            <> (repo.repoDescription & fromMaybe "")
             <> "\n"
          )
-      <> ("homepage: " <> (repo & GH.repoHomepage & fromMaybe "") <> "\n")
+      <> ("homepage: " <> (repo.repoHomepage & fromMaybe "") <> "\n")
       <> ( "language: "
-            <> (repo & GH.repoLanguage <&> GH.getLanguage & fromMaybe "")
+            <> (repo.repoLanguage <&> GH.getLanguage & fromMaybe "")
             <> "\n"
          )
       <> ("stargazers_count: " <> show (GH.repoStargazersCount repo) <> "\n")
@@ -134,12 +134,14 @@ formatRepo extendedRepo =
             <> "\n"
          )
       <> ("open_issues_count: " <> show (GH.repoOpenIssuesCount repo) <> "\n")
+      <> ( "is_archived: " <> (repo.repoArchived & show & T.toLower) <> "\n"
+         )
       <> ( "created_at: "
-            <> (repo & GH.repoCreatedAt <&> show & fromMaybe "")
+            <> (repo.repoCreatedAt <&> show & fromMaybe "")
             <> "\n"
          )
       <> ( "updated_at: "
-            <> (repo & GH.repoUpdatedAt <&> show & fromMaybe "")
+            <> (repo.repoUpdatedAt <&> show & fromMaybe "")
             <> "\n"
          )
 
@@ -164,9 +166,9 @@ getLastUrl req = do
 getNumberOfCommits :: Maybe Text -> Repo -> IO (Maybe Integer)
 getNumberOfCommits ghTokenMb repo = do
   let repoSlug =
-        (repo & GH.repoOwner & GH.simpleOwnerLogin & untagName)
+        (repo.repoOwner.simpleOwnerLogin & untagName)
           <> "/"
-          <> (repo & GH.repoName & untagName)
+          <> (repo.repoName & untagName)
 
   putText $ "⏳ Get number of commits for repo " <> repoSlug
 
@@ -240,6 +242,7 @@ upsertRepoQuery utc extendedRepo =
             stargazers_count: <<stargazers_count>>
             open_issues_count: <<open_issues_count>>
             <<commits_count>>
+            is_archived: <<is_archived>>
             created_utc: "<<created_utc>>"
             updated_utc: "<<updated_utc>>"
             crawled_utc: "<<crawled_utc>>"
@@ -250,26 +253,27 @@ upsertRepoQuery utc extendedRepo =
       }
     |]
       & var "github_id" (repo & GH.repoId & GH.untagId & show)
-      & var "owner" (repo & GH.repoOwner & GH.simpleOwnerLogin & untagName)
-      & var "name" (repo & GH.repoName & untagName)
-      & var "description" (repo & GH.repoDescription & fromMaybe "")
-      & var "homepage" (repo & GH.repoHomepage & fromMaybe "")
+      & var "owner" (repo.repoOwner.simpleOwnerLogin & untagName)
+      & var "name" (repo.repoName & untagName)
+      & var "description" (repo.repoDescription & fromMaybe "")
+      & var "homepage" (repo.repoHomepage & fromMaybe "")
       & var
         "language"
-        (repo & GH.repoLanguage <&> GH.getLanguage & fromMaybe "")
-      & var "stargazers_count" (repo & GH.repoStargazersCount & show)
-      & var "open_issues_count" (repo & GH.repoOpenIssuesCount & show)
+        (repo.repoLanguage <&> GH.getLanguage & fromMaybe "")
+      & var "stargazers_count" (repo.repoStargazersCount & show)
+      & var "open_issues_count" (repo.repoOpenIssuesCount & show)
       & var
         "commits_count"
         ( case commitsCount of
             Just count -> "commits_count: " <> show count
             Nothing -> ""
         )
+      & var "is_archived" (repo.repoArchived & show & T.toLower)
       & var "created_utc" (getTimestamp GH.repoCreatedAt)
       & var "updated_utc" (getTimestamp GH.repoUpdatedAt)
       & var "crawled_utc" utc
 
--- | TODO - Also store archived status
+-- | TODO: Use GraphQL variables instead of string interpolation
 insertRepoQuery :: Text -> ExtendedRepo -> Text
 insertRepoQuery utc extendedRepo =
   let
@@ -295,6 +299,7 @@ insertRepoQuery utc extendedRepo =
             stargazers_count: <<stargazers_count>>
             open_issues_count: <<open_issues_count>>
             commits_count: <<commits_count>>
+            is_archived: <<is_archived>>
             created_utc: "<<created_utc>>"
             updated_utc: "<<updated_utc>>"
             crawled_utc: "<<crawled_utc>>"
@@ -305,16 +310,17 @@ insertRepoQuery utc extendedRepo =
       }
     |]
       & var "github_id" (repo & GH.repoId & GH.untagId & show)
-      & var "owner" (repo & GH.repoOwner & GH.simpleOwnerLogin & untagName)
-      & var "name" (repo & GH.repoName & untagName)
-      & var "description" (repo & GH.repoDescription & fromMaybe "")
-      & var "homepage" (repo & GH.repoHomepage & fromMaybe "")
+      & var "owner" (repo.repoOwner.simpleOwnerLogin & untagName)
+      & var "name" (repo.repoName & untagName)
+      & var "description" (repo.repoDescription & fromMaybe "")
+      & var "homepage" (repo.repoHomepage & fromMaybe "")
       & var
         "language"
-        (repo & GH.repoLanguage <&> GH.getLanguage & fromMaybe "")
-      & var "stargazers_count" (repo & GH.repoStargazersCount & show)
-      & var "open_issues_count" (repo & GH.repoOpenIssuesCount & show)
+        (repo.repoLanguage <&> GH.getLanguage & fromMaybe "")
+      & var "stargazers_count" (repo.repoStargazersCount & show)
+      & var "open_issues_count" (repo.repoOpenIssuesCount & show)
       & var "commits_count" (commitsCount & fromMaybe 0 & show)
+      & var "is_archived" (repo.repoArchived & show & T.toLower)
       & var "created_utc" (getTimestamp GH.repoCreatedAt)
       & var "updated_utc" (getTimestamp GH.repoUpdatedAt)
       & var "crawled_utc" utc
@@ -471,7 +477,7 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
 
       let
         repos :: [GH.Repo] = gqlResponse.repos
-        delayBetweenRequests = 2000 -- ms
+        delayBetweenRequests = 1000 -- ms
       commitsCounts <-
         mapMSequentially
           delayBetweenRequests
@@ -489,11 +495,13 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
               repos
               commitsCounts
 
-      putText
-        $ "⏳ Save "
-        <> show (P.length repos)
-        <> " repos to Airsequel …"
-      extendedRepos & mapM_ (saveRepoInAirsequel OverwriteRepo)
+      when (P.not $ P.null extendedRepos) $ do
+        putText $
+          "⏳ Save "
+            <> show (P.length repos)
+            <> " repos to Airsequel …"
+        extendedRepos
+          & mapM_ (saveRepoInAirsequel OverwriteRepo)
 
       case gqlResponse.nextCursorMb of
         Nothing -> pure $ initialRepos <> extendedRepos
@@ -505,8 +513,9 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
             (Just nextCursor)
             (initialRepos <> extendedRepos)
 
-getReposViaSearch :: Maybe Text -> Text -> IO [ExtendedRepo]
-getReposViaSearch githubToken searchQuery = do
+
+loadAndSaveReposViaSearch :: Maybe Text -> Text -> IO [ExtendedRepo]
+loadAndSaveReposViaSearch githubToken searchQuery = do
   let gqlQUery =
         [r|
           {
@@ -523,13 +532,12 @@ getReposViaSearch githubToken searchQuery = do
                     name
                     databaseId
                     stargazerCount
-                    createdAt
                     description
                     homepageUrl
-                    name
                     issues (states: [OPEN]) {
                       totalCount
                     }
+                    isArchived
                     createdAt
                     updatedAt
                   }
@@ -559,10 +567,23 @@ main = do
 
   -- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
 
-  repos <-
-    getReposViaSearch
-      ghTokenMb
-      "language:haskell stars:>200 sort:updated-desc"
+  -- Good filter options:
+  --   language:haskell
+  --   stars:>=10
+  --   stars:10..50
+  --   sort:updated-desc
+  --   sort:stars-asc
+  --   archived:true
+  let searchQuery =
+        [r|
+          language:haskell
+          stars:14..15
+          sort:stars-desc
+        |]
+          & T.replace "\n" " "
+          & T.strip
+
+  repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery
 
   putText $ "Found " <> show (P.length repos) <> " repos:"
   repos
