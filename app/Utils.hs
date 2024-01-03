@@ -32,6 +32,7 @@ import Data.Aeson.Types (parseJSON)
 import Data.Time (UTCTime)
 import GitHub.Data qualified as GH
 
+
 emptyOwner :: GH.SimpleOwner
 emptyOwner =
   GH.SimpleOwner
@@ -41,6 +42,7 @@ emptyOwner =
     , GH.simpleOwnerUrl = GH.URL ""
     , GH.simpleOwnerType = GH.OwnerUser
     }
+
 
 emptyRepo :: GH.Repo
 emptyRepo =
@@ -79,12 +81,14 @@ emptyRepo =
     , GH.repoSshUrl = Nothing
     }
 
+
 mapMSequentially :: Int -> (a -> IO b) -> [a] -> IO [b]
 mapMSequentially delayInMs f xs = do
   let delayM = liftIO $ threadDelay (delayInMs * 1000)
   mapM (\x -> f x <* delayM) xs
 
-{- | To make loading data from GitHub GraphQL API easier
+
+{-| To make loading data from GitHub GraphQL API easier
 | we also have this simpler (in comparison to GH.Repo) data type
 -}
 data RepoObject = RepoObject
@@ -101,6 +105,7 @@ data RepoObject = RepoObject
   }
   deriving (Show, Eq, Generic)
 
+
 instance FromJSON RepoObject where
   parseJSON = withObject "RepoObject" $ \o -> do
     owner <- o .: "owner" >>= (.: "login")
@@ -115,6 +120,7 @@ instance FromJSON RepoObject where
     updatedAt <- o .: "updatedAt"
 
     pure RepoObject{..}
+
 
 repoObjectToRepo :: RepoObject -> GH.Repo
 repoObjectToRepo repoObj =
