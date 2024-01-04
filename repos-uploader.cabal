@@ -4,7 +4,7 @@ cabal-version: 2.2
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 490342bfbe157db93933ef67d7545824abe9227ba1f9a84434f7fe37c1a70072
+-- hash: 814ea5e24185d06d45ae7fbede4400077c963f0056a641ff8e843da2f8062efb
 
 name:           repos-uploader
 version:        0.0.0.0
@@ -44,6 +44,7 @@ library
     , http-client
     , http-client-tls
     , http-link-header
+    , http-types
     , network-uri
     , protolude
     , raw-strings-qq
@@ -54,6 +55,8 @@ library
 executable repos-uploader
   main-is: Main.hs
   other-modules:
+      Airsequel
+      Types
       Utils
       Paths_repos_uploader
   autogen-modules:
@@ -74,6 +77,7 @@ executable repos-uploader
     , http-client
     , http-client-tls
     , http-link-header
+    , http-types
     , network-uri
     , protolude
     , raw-strings-qq

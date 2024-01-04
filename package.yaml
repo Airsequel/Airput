@@ -21,6 +21,7 @@ dependencies:
   - raw-strings-qq
   - text
   - http-link-header
+  - http-types
   - network-uri
   - time
 

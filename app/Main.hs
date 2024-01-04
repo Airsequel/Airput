@@ -9,21 +9,17 @@ module Main where
 import Protolude (
   Bool (..),
   Either (Left, Right),
-  Eq,
-  Generic,
   IO,
+  Int,
   Integer,
   Maybe (..),
-  Show,
   Text,
   elem,
   encodeUtf8,
   find,
   fromMaybe,
   lastMay,
-  mapM,
   mapM_,
-  print,
   pure,
   putErrText,
   putText,
@@ -35,27 +31,19 @@ import Protolude (
   (.),
   (<&>),
   (<>),
-  (==),
   (>>=),
  )
 import Protolude qualified as P
 
 import Control.Arrow ((>>>))
 import Data.Aeson (
-  FromJSON (parseJSON),
-  Value,
   eitherDecode,
   encode,
   object,
-  withObject,
-  (.:),
-  (.:?),
   (.=),
  )
 import Data.List (lookup)
 import Data.Text qualified as T
-import Data.Time (getCurrentTime)
-import Data.Time.Format.ISO8601 (iso8601Show)
 import GHC.Base (String)
 import GitHub qualified as GH
 import GitHub.Endpoints.Activity.Starring as GH (Repo, untagName)
@@ -76,49 +64,11 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Link (href, parseLinkHeaderBS)
 import Network.HTTP.Link.Types (Link, LinkParam (..), linkParams)
 import Network.URI (URI)
-import System.Environment (lookupEnv)
 import Text.RawString.QQ (r)
 
-import Utils (RepoObject, mapMSequentially, repoObjectToRepo)
-
-
--- | Replaces a variable in a string with a value
-var :: Text -> Text -> Text -> Text
-var idName =
-  T.replace ("<<" <> idName <> ">>")
-
-
-data SaveStrategy = OverwriteRepo | AddRepo
-  deriving (Show, Eq)
-
-
-data ExtendedRepo = ExtendedRepo
-  { core :: GH.Repo
-  , commitsCount :: Maybe Integer
-  }
-  deriving (Show, Eq)
-
-
--- | The ID of the Airsequel database loaded from the environment
-loadDbId :: IO Text
-loadDbId =
-  lookupEnv "AIRSEQUEL_DB_ID" <&> (fromMaybe "" >>> T.pack)
-
-
-loadDbEndpoint :: IO Text
-loadDbEndpoint = do
-  dbId <- loadDbId
-  pure $ "https://www.airsequel.com/dbs/" <> dbId <> "/graphql"
-
-
-loadAsWriteToken :: IO Text
-loadAsWriteToken =
-  lookupEnv "AIRSEQUEL_API_TOKEN" <&> (fromMaybe "" >>> T.pack)
-
-
-loadGitHubToken :: IO (Maybe Text)
-loadGitHubToken =
-  lookupEnv "GITHUB_TOKEN" <&> (<&> T.pack)
+import Airsequel (saveRepoInAirsequel)
+import Types (ExtendedRepo (..), GqlResponse (..), SaveStrategy (..))
+import Utils (loadGitHubToken, mapMSequentially, var)
 
 
 formatRepo :: ExtendedRepo -> Text
@@ -209,188 +159,6 @@ getNumberOfCommits ghTokenMb repo = do
       & pure
 
 
-deleteRepoQuery :: ExtendedRepo -> Text
-deleteRepoQuery extendedRepo =
-  let
-    repo = extendedRepo.core
-  in
-    [r|
-      mutation DeleteRepo {
-        delete_repos(
-          filter: {
-            github_id: { eq: <<github_id>> }
-          }
-        ) {
-          affected_rows
-        }
-      }
-    |]
-      & var "github_id" (repo & GH.repoId & GH.untagId & show)
-
-
--- | TODO: Airsequel's GraphQL API doesn't support userting yet
-upsertRepoQuery :: Text -> ExtendedRepo -> Text
-upsertRepoQuery utc extendedRepo =
-  let
-    repo = extendedRepo.core
-    commitsCount = extendedRepo.commitsCount
-    getTimestamp field =
-      repo
-        & field
-        <&> iso8601Show
-        & fromMaybe ""
-        & T.pack
-  in
-    [r|
-      mutation {
-        upsert_repos(
-          filter: {
-            github_id: { eq: <<github_id>> },
-          }
-          set: {
-            github_id: <<github_id>>
-            owner: "<<owner>>"
-            name: "<<name>>"
-            description: "<<description>>"
-            homepage: "<<homepage>>"
-            language: "<<language>>"
-            stargazers_count: <<stargazers_count>>
-            open_issues_count: <<open_issues_count>>
-            <<commits_count>>
-            is_archived: <<is_archived>>
-            created_utc: "<<created_utc>>"
-            updated_utc: "<<updated_utc>>"
-            crawled_utc: "<<crawled_utc>>"
-          }
-        ) {
-            affected_rows
-        }
-      }
-    |]
-      & var "github_id" (repo & GH.repoId & GH.untagId & show)
-      & var "owner" (repo.repoOwner.simpleOwnerLogin & untagName)
-      & var "name" (repo.repoName & untagName)
-      & var "description" (repo.repoDescription & fromMaybe "")
-      & var "homepage" (repo.repoHomepage & fromMaybe "")
-      & var
-        "language"
-        (repo.repoLanguage <&> GH.getLanguage & fromMaybe "")
-      & var "stargazers_count" (repo.repoStargazersCount & show)
-      & var "open_issues_count" (repo.repoOpenIssuesCount & show)
-      & var
-        "commits_count"
-        ( case commitsCount of
-            Just count -> "commits_count: " <> show count
-            Nothing -> ""
-        )
-      & var "is_archived" (repo.repoArchived & show & T.toLower)
-      & var "created_utc" (getTimestamp GH.repoCreatedAt)
-      & var "updated_utc" (getTimestamp GH.repoUpdatedAt)
-      & var "crawled_utc" utc
-
-
--- | TODO: Use GraphQL variables instead of string interpolation
-insertRepoQuery :: Text -> ExtendedRepo -> Text
-insertRepoQuery utc extendedRepo =
-  let
-    repo = extendedRepo.core
-    commitsCount = extendedRepo.commitsCount
-    getTimestamp field =
-      repo
-        & field
-        <&> iso8601Show
-        & fromMaybe ""
-        & T.pack
-  in
-    [r|
-      mutation InsertRepo {
-        insert_repos(objects: [
-          {
-            github_id: <<github_id>>
-            owner: "<<owner>>"
-            name: "<<name>>"
-            description: "<<description>>"
-            homepage: "<<homepage>>"
-            language: "<<language>>"
-            stargazers_count: <<stargazers_count>>
-            open_issues_count: <<open_issues_count>>
-            commits_count: <<commits_count>>
-            is_archived: <<is_archived>>
-            created_utc: "<<created_utc>>"
-            updated_utc: "<<updated_utc>>"
-            crawled_utc: "<<crawled_utc>>"
-          }
-        ]) {
-          affected_rows
-        }
-      }
-    |]
-      & var "github_id" (repo & GH.repoId & GH.untagId & show)
-      & var "owner" (repo.repoOwner.simpleOwnerLogin & untagName)
-      & var "name" (repo.repoName & untagName)
-      & var "description" (repo.repoDescription & fromMaybe "")
-      & var "homepage" (repo.repoHomepage & fromMaybe "")
-      & var
-        "language"
-        (repo.repoLanguage <&> GH.getLanguage & fromMaybe "")
-      & var "stargazers_count" (repo.repoStargazersCount & show)
-      & var "open_issues_count" (repo.repoOpenIssuesCount & show)
-      & var "commits_count" (commitsCount & fromMaybe 0 & show)
-      & var "is_archived" (repo.repoArchived & show & T.toLower)
-      & var "created_utc" (getTimestamp GH.repoCreatedAt)
-      & var "updated_utc" (getTimestamp GH.repoUpdatedAt)
-      & var "crawled_utc" utc
-
-
--- | Save the repo in Airsequel via a POST request executed by http-client
-saveRepoInAirsequel :: SaveStrategy -> ExtendedRepo -> IO ()
-saveRepoInAirsequel saveStrategy extendedRepo = do
-  dbEndpoint <- loadDbEndpoint
-  airseqWriteToken <- loadAsWriteToken
-
-  manager <- newManager tlsManagerSettings
-
-  now <- getCurrentTime <&> (iso8601Show >>> T.pack)
-
-  -- Delete the repo first before inserting it
-  -- if the save strategy is to overwrite
-  when (saveStrategy == OverwriteRepo) $ do
-    initialDeleteRequest <- parseRequest $ T.unpack dbEndpoint
-    let deleteRequest =
-          initialDeleteRequest
-            { method = "POST"
-            , requestHeaders =
-                [ ("Content-Type", "application/json")
-                ,
-                  ( "Authorization"
-                  , "Bearer " <> airseqWriteToken & encodeUtf8
-                  )
-                ]
-            , requestBody =
-                RequestBodyLBS $
-                  encode $
-                    object ["query" .= deleteRepoQuery extendedRepo]
-            }
-    deleteResponse <- httpLbs deleteRequest manager
-    print deleteResponse
-
-  initialInsertRequest <- parseRequest $ T.unpack dbEndpoint
-  let insertRequest =
-        initialInsertRequest
-          { method = "POST"
-          , requestHeaders =
-              [ ("Content-Type", "application/json")
-              , ("Authorization", "Bearer " <> airseqWriteToken & encodeUtf8)
-              ]
-          , requestBody =
-              RequestBodyLBS $
-                encode $
-                  object ["query" .= insertRepoQuery now extendedRepo]
-          }
-  insertResponse <- httpLbs insertRequest manager
-  print insertResponse
-
-
 {-| Loads a single repo from GitHub, adds number of commits,
 | and saves it to Airsequel
 -}
@@ -413,33 +181,6 @@ loadAndSaveRepo ghTokenMb saveStrategy owner name = do
               }
       putText $ formatRepo extendedRepo
       saveRepoInAirsequel saveStrategy extendedRepo
-
-
-data GqlResponse = GqlResponse
-  { repos :: [Repo]
-  , errorsMb :: Maybe Value
-  , nextCursorMb :: Maybe Text
-  }
-  deriving (Show, Eq, Generic)
-
-
-instance FromJSON GqlResponse where
-  parseJSON = withObject "GqlResponse" $ \o -> do
-    data_ <- o .: "data"
-    errorsMb <- o .:? "errors"
-    search <- data_ .: "search"
-    edges <- search .: "edges"
-    repos :: [RepoObject] <- edges & mapM (.: "node")
-
-    pageInfo <- search .: "pageInfo"
-    nextCursorMb <- pageInfo .:? "endCursor"
-
-    pure
-      GqlResponse
-        { repos = repos <&> repoObjectToRepo
-        , errorsMb
-        , nextCursorMb
-        }
 
 
 getGhHeaders :: (P.IsString a) => Maybe Text -> [(a, P.ByteString)]
@@ -478,7 +219,9 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
                               & var
                                 "optionalAfter"
                                 ( nextCursorMb
-                                    <&> (\cursor -> "after: \"" <> cursor <> "\"")
+                                    <&> ( \cursor ->
+                                            "after: \"" <> cursor <> "\""
+                                        )
                                     & fromMaybe ""
                                 )
                            )
@@ -486,7 +229,7 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
           }
   response <- httpLbs request manager
   let gqlResult :: Either String GqlResponse =
-        response & responseBody & eitherDecode
+        response.responseBody & eitherDecode
 
   case gqlResult of
     Left error -> do
@@ -536,15 +279,15 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
             (initialRepos <> extendedRepos)
 
 
-loadAndSaveReposViaSearch :: Maybe Text -> Text -> IO [ExtendedRepo]
-loadAndSaveReposViaSearch githubToken searchQuery = do
+loadAndSaveReposViaSearch :: Maybe Text -> Text -> Int -> IO [ExtendedRepo]
+loadAndSaveReposViaSearch githubToken searchQuery numRepos = do
   let gqlQUery =
         [r|
           {
             search(
               query: "<<searchQuery>>",
               type: REPOSITORY,
-              first: 20
+              first: <<numRepos>>
               <<optionalAfter>>
             ) {
               edges {
@@ -572,6 +315,7 @@ loadAndSaveReposViaSearch githubToken searchQuery = do
           }
         |]
           & var "searchQuery" searchQuery
+          & var "numRepos" (show numRepos)
 
   execGqlQuery
     "https://api.github.com/graphql"
@@ -606,7 +350,7 @@ main = do
           & T.replace "\n" " "
           & T.strip
 
-  repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery
+  repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery 2
 
   putText $ "Found " <> show (P.length repos) <> " repos:"
   repos
