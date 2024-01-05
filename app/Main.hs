@@ -1,8 +1,8 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
+{-# HLINT ignore "Monoid law, left identity" #-}
 {-# HLINT ignore "Use maybe" #-}
-{-# HLINT ignore "Use unless" #-}
 
 module Main where
 
@@ -18,8 +18,10 @@ import Protolude (
   encodeUtf8,
   find,
   fromMaybe,
+  headMay,
   lastMay,
   mapM_,
+  mempty,
   pure,
   putErrText,
   putText,
@@ -29,6 +31,7 @@ import Protolude (
   ($),
   (&),
   (.),
+  (<$>),
   (<&>),
   (<>),
   (>>=),
@@ -46,7 +49,7 @@ import Data.List (lookup)
 import Data.Text qualified as T
 import GHC.Base (String)
 import GitHub qualified as GH
-import GitHub.Endpoints.Activity.Starring as GH (Repo, untagName)
+import GitHub.Endpoints.Activity.Starring as GH (Auth (OAuth), Repo, untagName)
 import GitHub.Internal.Prelude (fromString)
 import Network.HTTP.Client (
   RequestBody (RequestBodyLBS),
@@ -64,11 +67,54 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Link (href, parseLinkHeaderBS)
 import Network.HTTP.Link.Types (Link, LinkParam (..), linkParams)
 import Network.URI (URI)
+import Options.Applicative (
+  Parser,
+  argument,
+  command,
+  execParser,
+  fullDesc,
+  header,
+  helper,
+  hsubparser,
+  info,
+  metavar,
+  progDesc,
+  str,
+  (<**>),
+ )
 import Text.RawString.QQ (r)
 
 import Airsequel (saveRepoInAirsequel)
 import Types (ExtendedRepo (..), GqlResponse (..), SaveStrategy (..))
 import Utils (loadGitHubToken, mapMSequentially, var)
+
+
+-- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
+data CliCmd
+  = -- | Upload a single repo
+    Upload Text
+  | -- | Search for repos and upload them
+    Search
+
+
+commands :: Parser CliCmd
+commands = do
+  let
+    upload :: Parser CliCmd
+    upload = Upload <$> argument str (metavar "REPO_SLUG")
+
+    search :: Parser CliCmd
+    search = pure Search
+
+  hsubparser
+    ( mempty
+        <> command
+          "upload"
+          (info upload (progDesc "Upload a single repo"))
+        <> command
+          "search"
+          (info search (progDesc "Search for and upload several repos"))
+    )
 
 
 formatRepo :: ExtendedRepo -> Text
@@ -164,8 +210,13 @@ getNumberOfCommits ghTokenMb repo = do
 -}
 loadAndSaveRepo :: Maybe Text -> SaveStrategy -> Text -> Text -> IO ()
 loadAndSaveRepo ghTokenMb saveStrategy owner name = do
+  let
+    uploadFunc = case ghTokenMb of
+      Nothing -> GH.github'
+      Just ghToken -> GH.github (OAuth (encodeUtf8 ghToken))
+
   repoResult <-
-    GH.github'
+    uploadFunc
       GH.repositoryR
       (fromString $ T.unpack owner)
       (fromString $ T.unpack name)
@@ -195,17 +246,17 @@ getGhHeaders tokenMb =
       Nothing -> []
 
 
-execGqlQuery
-  :: Text
-  -> Maybe Text
+execGithubGqlQuery
+  :: Maybe Text
   -> Text
   -> Maybe Text
   -> [ExtendedRepo]
   -> IO [ExtendedRepo]
-execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
+execGithubGqlQuery ghTokenMb query nextCursorMb initialRepos = do
   manager <- newManager tlsManagerSettings
 
-  initialRequest <- parseRequest $ T.unpack apiEndpoint
+  initialRequest <- parseRequest $ T.unpack "https://api.github.com/graphql"
+
   let request =
         initialRequest
           { method = "POST"
@@ -227,7 +278,9 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
                            )
                     ]
           }
+
   response <- httpLbs request manager
+
   let gqlResult :: Either String GqlResponse =
         response.responseBody & eitherDecode
 
@@ -271,8 +324,7 @@ execGqlQuery apiEndpoint ghTokenMb query nextCursorMb initialRepos = do
       case gqlResponse.nextCursorMb of
         Nothing -> pure $ initialRepos <> extendedRepos
         Just nextCursor -> do
-          execGqlQuery
-            apiEndpoint
+          execGithubGqlQuery
             ghTokenMb
             query
             (Just nextCursor)
@@ -317,50 +369,77 @@ loadAndSaveReposViaSearch githubToken searchQuery numRepos = do
           & var "searchQuery" searchQuery
           & var "numRepos" (show numRepos)
 
-  execGqlQuery
-    "https://api.github.com/graphql"
+  execGithubGqlQuery
     githubToken
     gqlQUery
     Nothing
     []
 
 
-main :: IO ()
-main = do
+-- | Function to handle the execution of commands
+run :: CliCmd -> IO ()
+run cliCmd = do
   ghTokenMb <- loadGitHubToken
 
-  -- TODO: Add CLI flag to load and save a single repo
-  -- loadAndSaveRepo ghTokenMb OverwriteRepo "Airsequel" "SQLiteDAV"
+  case cliCmd of
+    Upload repoSlug -> do
+      let
+        fragments = repoSlug & T.splitOn "/"
+        ownerMb = fragments & headMay
+        nameMb = fragments & lastMay
 
-  -- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
+      case ownerMb of
+        Nothing -> putErrText "Error: Repo owner is missing"
+        Just owner ->
+          case nameMb of
+            Nothing -> putErrText "Error: Repo name is missing"
+            Just name ->
+              loadAndSaveRepo
+                ghTokenMb
+                OverwriteRepo
+                owner
+                name
+    Search -> do
+      -- Good filter options:
+      --   language:haskell
+      --   stars:>=10
+      --   stars:10..50
+      --   sort:updated-desc
+      --   sort:stars-asc
+      --   archived:true
+      let searchQuery =
+            [r|
+              language:haskell
+              stars:56..76
+              sort:stars-desc
+            |]
+              & T.replace "\n" " "
+              & T.strip
 
-  -- Good filter options:
-  --   language:haskell
-  --   stars:>=10
-  --   stars:10..50
-  --   sort:updated-desc
-  --   sort:stars-asc
-  --   archived:true
-  let searchQuery =
-        [r|
-          language:haskell
-          stars:14..15
-          sort:stars-desc
-        |]
-          & T.replace "\n" " "
-          & T.strip
+      repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery 20
 
-  repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery 2
+      putText $ "Found " <> show (P.length repos) <> " repos:"
+      repos
+        <&> ( \repo ->
+                (repo.core.repoOwner.simpleOwnerLogin & untagName)
+                  <> ("/" :: Text)
+                  <> (repo.core.repoName & untagName)
+                  <> (" " :: Text)
+                  <> show repo.commitsCount
+            )
+        & mapM_ putText
 
-  putText $ "Found " <> show (P.length repos) <> " repos:"
-  repos
-    <&> ( \repo ->
-            (repo.core.repoOwner.simpleOwnerLogin & untagName)
-              <> ("/" :: Text)
-              <> (repo.core.repoName & untagName)
-              <> (" " :: Text)
-              <> show repo.commitsCount
-        )
-    & mapM_ putText
+      pure ()
 
-  pure ()
+
+main :: IO ()
+main = do
+  let opts =
+        info
+          (commands <**> helper)
+          ( fullDesc
+              <> progDesc "Upload repo metadata to Airsequel"
+              <> header "repos-uploader"
+          )
+
+  execParser opts >>= run

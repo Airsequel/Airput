@@ -4,7 +4,7 @@ cabal-version: 2.2
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 814ea5e24185d06d45ae7fbede4400077c963f0056a641ff8e843da2f8062efb
+-- hash: 63fc3e8744bf308b5a7b0c2268b75bb440d310bd2dc36e72791d893e12b745c3
 
 name:           repos-uploader
 version:        0.0.0.0
@@ -32,6 +32,7 @@ library
       source
   default-extensions:
       ImportQualifiedPost
+      LambdaCase
       NoImplicitPrelude
       OverloadedRecordDot
       OverloadedStrings
@@ -40,12 +41,14 @@ library
   build-depends:
       aeson
     , base
+    , bytestring
     , github
     , http-client
     , http-client-tls
     , http-link-header
     , http-types
     , network-uri
+    , optparse-applicative
     , protolude
     , raw-strings-qq
     , text
@@ -65,6 +68,7 @@ executable repos-uploader
       app
   default-extensions:
       ImportQualifiedPost
+      LambdaCase
       NoImplicitPrelude
       OverloadedRecordDot
       OverloadedStrings
@@ -73,12 +77,14 @@ executable repos-uploader
   build-depends:
       aeson
     , base
+    , bytestring
     , github
     , http-client
     , http-client-tls
     , http-link-header
     , http-types
     , network-uri
+    , optparse-applicative
     , protolude
     , raw-strings-qq
     , text

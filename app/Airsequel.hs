@@ -65,7 +65,7 @@ import Text.RawString.QQ (r)
 
 import Data.Aeson.Types (parseEither)
 import Types (ExtendedRepo (..), SaveStrategy (..))
-import Utils (loadAsWriteToken, loadDbEndpoint, var)
+import Utils (encodeToText, loadAirsWriteToken, loadDbEndpoint, var)
 
 
 setRequestFields :: Text -> Text -> Request -> Request
@@ -104,7 +104,7 @@ upsertRepoQuery utc extendedRepo rowidMb =
             github_id: <<github_id>>
             owner: "<<owner>>"
             name: "<<name>>"
-            description: "<<description>>"
+            description: <<description>>
             homepage: "<<homepage>>"
             language: "<<language>>"
             stargazers_count: <<stargazers_count>>
@@ -131,6 +131,11 @@ upsertRepoQuery utc extendedRepo rowidMb =
           }
         ) {
             affected_rows
+            returning {
+              owner
+              name
+              rowid
+            }
         }
       }
     |]
@@ -143,7 +148,7 @@ upsertRepoQuery utc extendedRepo rowidMb =
       & var "github_id" (repo.repoId & GH.untagId & show)
       & var "owner" (repo.repoOwner.simpleOwnerLogin & untagName)
       & var "name" (repo.repoName & untagName)
-      & var "description" (repo.repoDescription & fromMaybe "")
+      & var "description" (repo.repoDescription & fromMaybe "" & encodeToText)
       & var "homepage" (repo.repoHomepage & fromMaybe "")
       & var
         "language"
@@ -163,9 +168,11 @@ upsertRepoQuery utc extendedRepo rowidMb =
 
 
 -- | Get rowid of a repo with the specified GitHub ID
-getRowid :: Manager -> Text -> Text -> Int -> IO (Maybe Int)
-getRowid manager dbEndpoint airseqWriteToken github_id = do
+getRowid :: Manager -> Text -> Text -> ExtendedRepo -> IO (Maybe Int)
+getRowid manager dbEndpoint airseqWriteToken extendedRepo = do
   let
+    githubId = extendedRepo.core.repoId & GH.untagId
+
     getRowidQuery :: Text
     getRowidQuery =
       [r|
@@ -179,7 +186,7 @@ getRowid manager dbEndpoint airseqWriteToken github_id = do
           }
         }
       |]
-        & var "github_id" (show github_id)
+        & var "github_id" (show githubId)
 
   initialGetRowidRequest <- parseRequest $ T.unpack dbEndpoint
 
@@ -194,25 +201,32 @@ getRowid manager dbEndpoint airseqWriteToken github_id = do
     (getRowidResponse.responseStatus.statusCode /= 200)
     (putErrText $ show getRowidResponse.responseBody)
 
-  let rowidResult :: Either [P.Char] Int =
-        ( getRowidResponse.responseBody
-            & eitherDecode
-            :: Either [P.Char] Object
-        )
-          >>= ( \gqlRes ->
-                  P.flip parseEither gqlRes $ \gqlResObj -> do
-                    gqlData <- gqlResObj .: "data"
-                    gqlData .: "repos"
-              )
-          >>= ( \case
-                  [] -> Left "Repo is not in Airsequel yet"
-                  [repo :: Object] -> parseEither (.: "rowid") repo
-                  _ ->
-                    Left $
-                      "Error: Repo with GitHub ID \""
-                        <> show github_id
-                        <> "\" is not unique in Airsequel"
-              )
+  let
+    msgBase =
+      "Repo \""
+        <> (extendedRepo.core.repoOwner.simpleOwnerLogin & untagName)
+        <> "/"
+        <> (extendedRepo.core.repoName & untagName)
+        <> "\" is not"
+
+    rowidResult :: Either [P.Char] Int =
+      ( getRowidResponse.responseBody
+          & eitherDecode
+          :: Either [P.Char] Object
+      )
+        >>= ( \gqlRes ->
+                P.flip parseEither gqlRes $ \gqlResObj -> do
+                  gqlData <- gqlResObj .: "data"
+                  gqlData .: "repos"
+            )
+        >>= ( \case
+                [] -> Left $ T.unpack $ msgBase <> " in Airsequel yet"
+                [repo :: Object] -> parseEither (.: "rowid") repo
+                _ ->
+                  Left $
+                    T.unpack $
+                      "Error: " <> msgBase <> " unique in Airsequel"
+            )
 
   case rowidResult of
     Left err -> do
@@ -232,7 +246,7 @@ via a POST request executed by http-client
 saveRepoInAirsequel :: SaveStrategy -> ExtendedRepo -> IO ()
 saveRepoInAirsequel saveStrategy extendedRepo = do
   dbEndpoint <- loadDbEndpoint
-  airseqWriteToken <- loadAsWriteToken
+  airseqWriteToken <- loadAirsWriteToken
 
   manager <- newManager tlsManagerSettings
 
@@ -247,7 +261,7 @@ saveRepoInAirsequel saveStrategy extendedRepo = do
           manager
           dbEndpoint
           airseqWriteToken
-          (extendedRepo.core.repoId & GH.untagId)
+          extendedRepo
       else pure Nothing
 
   initialInsertRequest <- parseRequest $ T.unpack dbEndpoint
@@ -277,6 +291,11 @@ deleteRepo manager dbEndpoint airseqWriteToken extendedRepo = do
               }
             ) {
               affected_rows
+              returning {
+                owner
+                name
+                rowid
+              }
             }
           }
         |]

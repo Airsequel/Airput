@@ -1,5 +1,6 @@
 module Utils (
-  loadAsWriteToken,
+  encodeToText,
+  loadAirsWriteToken,
   loadDbEndpoint,
   loadDbId,
   loadGitHubToken,
@@ -11,29 +12,50 @@ where
 import Protolude (
   IO,
   Int,
-  Maybe,
+  Maybe (..),
   Text,
-  fromMaybe,
+  decodeUtf8,
   liftIO,
   mapM,
   pure,
+  putErrText,
   ($),
   (*),
-  (<&>),
+  (.),
   (<*),
   (<>),
  )
 
-import Control.Arrow ((>>>))
 import Control.Concurrent (threadDelay)
+import Data.Aeson (ToJSON, encode)
+import Data.ByteString.Lazy (toStrict)
 import Data.Text qualified as T
 import System.Environment (lookupEnv)
+import System.Exit (die)
+
+
+encodeToText :: (ToJSON a) => a -> Text
+encodeToText =
+  decodeUtf8 . toStrict . encode
+
+
+lookupEnvOrDie :: Text -> IO Text
+lookupEnvOrDie envVarName = do
+  envVarMb <- lookupEnv (T.unpack envVarName)
+  case envVarMb of
+    Just envVar -> pure $ T.pack envVar
+    Nothing -> do
+      die $
+        T.unpack $
+          "ERROR: "
+            <> envVarName
+            <> " environment variable must be set"
 
 
 -- | The ID of the Airsequel database loaded from the environment
 loadDbId :: IO Text
 loadDbId =
-  lookupEnv "AIRSEQUEL_DB_ID" <&> (fromMaybe "" >>> T.pack)
+  lookupEnvOrDie "AIRSEQUEL_DB_ID"
 
 
 loadDbEndpoint :: IO Text
@@ -42,14 +64,22 @@ loadDbEndpoint = do
   pure $ "https://www.airsequel.com/dbs/" <> dbId <> "/graphql"
 
 
-loadAsWriteToken :: IO Text
-loadAsWriteToken =
-  lookupEnv "AIRSEQUEL_API_TOKEN" <&> (fromMaybe "" >>> T.pack)
+loadAirsWriteToken :: IO Text
+loadAirsWriteToken =
+  lookupEnvOrDie "AIRSEQUEL_API_TOKEN"
 
 
 loadGitHubToken :: IO (Maybe Text)
-loadGitHubToken =
-  lookupEnv "GITHUB_TOKEN" <&> (<&> T.pack)
+loadGitHubToken = do
+  ghTokenMb <- lookupEnv "GITHUB_TOKEN"
+  case ghTokenMb of
+    Nothing -> do
+      putErrText
+        "WARNING: Without a GITHUB_TOKEN environment variable \
+        \all requests to GitHub will be unauthenticated."
+      pure Nothing
+    Just token ->
+      pure $ Just $ T.pack token
 
 
 -- | Replaces a variable in a string with a value

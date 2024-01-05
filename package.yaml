@@ -17,16 +17,19 @@ extra-source-files:
 dependencies:
   - aeson
   - base
-  - protolude
-  - raw-strings-qq
-  - text
+  - bytestring
   - http-link-header
   - http-types
   - network-uri
+  - optparse-applicative
+  - protolude
+  - raw-strings-qq
+  - text
   - time
 
 default-extensions:
   - ImportQualifiedPost
+  - LambdaCase
   - NoImplicitPrelude
   - OverloadedRecordDot
   - OverloadedStrings
