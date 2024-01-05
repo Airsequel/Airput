@@ -76,12 +76,14 @@ import Options.Applicative (
   info,
   metavar,
   progDesc,
+  progDescDoc,
   str,
   (<**>),
  )
 import Text.RawString.QQ (r)
 
 import Airsequel (saveRepoInAirsequel)
+import Options.Applicative.Help.Pretty (vsep)
 import Types (ExtendedRepo (..), GqlResponse (..), SaveStrategy (..))
 import Utils (loadGitHubToken, mapMSequentially)
 
@@ -91,7 +93,7 @@ data CliCmd
   = -- | Upload a single repo
     Upload Text
   | -- | Search for repos and upload them
-    Search
+    Search Text
 
 
 commands :: Parser CliCmd
@@ -101,7 +103,7 @@ commands = do
     upload = Upload <$> argument str (metavar "REPO_SLUG")
 
     search :: Parser CliCmd
-    search = pure Search
+    search = Search <$> argument str (metavar "SEARCH_QUERY")
 
   hsubparser
     ( mempty
@@ -112,10 +114,21 @@ commands = do
           "search"
           ( info
               search
-              ( progDesc
-                  "Search for and upload several repos.\n\
-                  \WARNING: If the search query returns too many repos, \
-                  \the result will be truncated."
+              ( progDescDoc $
+                  Just $
+                    vsep
+                      [ "Search for and upload several repos."
+                      , "WARNING: If the search returns more than 1000 repos,"
+                      , "  the results will be truncated."
+                      , ""
+                      , "Good search options are:"
+                      , "- language:haskell"
+                      , "- stars:>=10"
+                      , "- stars:10..50"
+                      , "- sort:updated-desc"
+                      , "- sort:stars-asc"
+                      , "- archived:true"
+                      ]
               )
           )
     )
@@ -313,6 +326,7 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
           "⏳ Save "
             <> show (P.length repos)
             <> " repos to Airsequel …"
+        -- TODO: Save all repos in one request
         extendedRepos
           & mapM_ (saveRepoInAirsequel OverwriteRepo)
 
@@ -406,24 +420,10 @@ run cliCmd = do
                 OverwriteRepo
                 owner
                 name
-    Search -> do
-      -- Good filter options:
-      --   language:haskell
-      --   stars:>=10
-      --   stars:10..50
-      --   sort:updated-desc
-      --   sort:stars-asc
-      --   archived:true
-      let searchQuery =
-            [r|
-              language:haskell
-              stars:56..76
-              sort:stars-desc
-            |]
-              & T.replace "\n" " "
-              & T.strip
+    Search searchQuery -> do
+      let searchQueryNorm = searchQuery & T.replace "\n" " " & T.strip
 
-      repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery 20 Nothing
+      repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 20 Nothing
 
       putText $ "Found " <> show (P.length repos) <> " repos:"
       repos
