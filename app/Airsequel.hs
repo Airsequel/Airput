@@ -41,6 +41,8 @@ import Data.Aeson (
   (.:),
   (.=),
  )
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types (parseEither)
 import Data.Text qualified as T
 import Data.Time (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
@@ -63,13 +65,12 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (statusCode)
 import Text.RawString.QQ (r)
 
-import Data.Aeson.Types (parseEither)
 import Types (ExtendedRepo (..), SaveStrategy (..))
-import Utils (encodeToText, loadAirsWriteToken, loadDbEndpoint, var)
+import Utils (loadAirsWriteToken, loadDbEndpoint)
 
 
-setRequestFields :: Text -> Text -> Request -> Request
-setRequestFields airseqWriteToken query req =
+setRequestFields :: Text -> Text -> Object -> Request -> Request
+setRequestFields airseqWriteToken query variables req =
   req
     { method = "POST"
     , requestHeaders =
@@ -79,92 +80,74 @@ setRequestFields airseqWriteToken query req =
     , requestBody =
         RequestBodyLBS $
           encode $
-            object ["query" .= query]
+            object
+              [ "query" .= query
+              , "variables" .= variables
+              ]
     }
 
 
--- | Insert repos in Airsequel and update them if rowid is already assigned
-upsertRepoQuery :: Text -> ExtendedRepo -> Maybe Int -> Text
-upsertRepoQuery utc extendedRepo rowidMb =
-  let
-    repo = extendedRepo.core
-    commitsCount = extendedRepo.commitsCount
-    getTimestamp field =
-      repo
-        & field
-        <&> iso8601Show
-        & fromMaybe ""
-        & T.pack
-  in
-    [r|
-      mutation {
-        insert_repos(
-          objects: [{
-            <<rowid>>
-            github_id: <<github_id>>
-            owner: "<<owner>>"
-            name: "<<name>>"
-            description: <<description>>
-            homepage: "<<homepage>>"
-            language: "<<language>>"
-            stargazers_count: <<stargazers_count>>
-            open_issues_count: <<open_issues_count>>
-            <<commits_count>>
-            is_archived: <<is_archived>>
-            created_utc: "<<created_utc>>"
-            updated_utc: "<<updated_utc>>"
-            crawled_utc: "<<crawled_utc>>"
-          }]
-          on_conflict: {
-            constraint: rowid
-            update_columns: [
-              description
-              homepage
-              language
-              stargazers_count
-              open_issues_count
-              commits_count
-              is_archived
-              updated_utc
-              crawled_utc
-            ]
-          }
-        ) {
-            affected_rows
-            returning {
-              owner
-              name
-              rowid
-            }
+-- | Insert repos in Airsequel or update them if rowid is already assigned
+upsertRepoQuery :: Text
+upsertRepoQuery = do
+  [r|
+    mutation InsertRepo (
+      $rowid: Int
+      $github_id: Int!
+      $owner: String!
+      $name: String!
+      $description: String
+      $homepage: String
+      $language: String
+      $stargazers_count: Int
+      $open_issues_count: Int
+      $commits_count: Int
+      $is_archived: Boolean
+      $created_utc: String
+      $updated_utc: String
+      $crawled_utc: String!
+    ) {
+      insert_repos(
+        objects: [{
+          rowid: $rowid
+          github_id: $github_id
+          owner: $owner
+          name: $name
+          description: $description
+          homepage: $homepage
+          language: $language
+          stargazers_count: $stargazers_count
+          open_issues_count: $open_issues_count
+          commits_count: $commits_count
+          is_archived: $is_archived
+          created_utc: $created_utc
+          updated_utc: $updated_utc
+          crawled_utc: $crawled_utc
+        }]
+        on_conflict: {
+          constraint: rowid
+          update_columns: [
+            description
+            homepage
+            language
+            stargazers_count
+            open_issues_count
+            commits_count
+            is_archived
+            updated_utc
+            crawled_utc
+          ]
         }
+      ) {
+          affected_rows
+          returning {
+            owner
+            name
+            rowid
+          }
       }
-    |]
-      & var
-        "rowid"
-        ( case rowidMb of
-            Just rowid -> "rowid: " <> show rowid
-            Nothing -> ""
-        )
-      & var "github_id" (repo.repoId & GH.untagId & show)
-      & var "owner" (repo.repoOwner.simpleOwnerLogin & untagName)
-      & var "name" (repo.repoName & untagName)
-      & var "description" (repo.repoDescription & fromMaybe "" & encodeToText)
-      & var "homepage" (repo.repoHomepage & fromMaybe "")
-      & var
-        "language"
-        (repo.repoLanguage <&> GH.getLanguage & fromMaybe "")
-      & var "stargazers_count" (repo.repoStargazersCount & show)
-      & var "open_issues_count" (repo.repoOpenIssuesCount & show)
-      & var
-        "commits_count"
-        ( case commitsCount of
-            Just count -> "commits_count: " <> show count
-            Nothing -> ""
-        )
-      & var "is_archived" (repo.repoArchived & show & T.toLower)
-      & var "created_utc" (getTimestamp GH.repoCreatedAt)
-      & var "updated_utc" (getTimestamp GH.repoUpdatedAt)
-      & var "crawled_utc" utc
+    }
+  |]
 
 
 -- | Get rowid of a repo with the specified GitHub ID
@@ -176,17 +159,14 @@ getRowid manager dbEndpoint airseqWriteToken extendedRepo = do
     getRowidQuery :: Text
     getRowidQuery =
       [r|
-        query GetRowid {
+        query GetRowid($github_id: Int!) {
           repos(
-            filter: {
-              github_id: { eq: <<github_id>> }
-            }
+            filter: { github_id: { eq: $github_id } }
           ) {
             rowid
           }
         }
       |]
-        & var "github_id" (show githubId)
 
   initialGetRowidRequest <- parseRequest $ T.unpack dbEndpoint
 
@@ -194,6 +174,7 @@ getRowid manager dbEndpoint airseqWriteToken extendedRepo = do
         setRequestFields
           airseqWriteToken
           getRowidQuery
+          (KeyMap.fromList ["github_id" .= githubId])
           initialGetRowidRequest
   getRowidResponse <- httpLbs getRowidRequest manager
 
@@ -265,11 +246,32 @@ saveRepoInAirsequel saveStrategy extendedRepo = do
       else pure Nothing
 
   initialInsertRequest <- parseRequest $ T.unpack dbEndpoint
-  let insertRequest =
-        setRequestFields
-          airseqWriteToken
-          (upsertRepoQuery now extendedRepo rowidMb)
-          initialInsertRequest
+
+  let
+    variables =
+      [ "rowid" .= rowidMb
+      , "github_id" .= (extendedRepo.core.repoId & GH.untagId)
+      , "owner" .= (extendedRepo.core.repoOwner.simpleOwnerLogin & untagName)
+      , "name" .= (extendedRepo.core.repoName & untagName)
+      , "description" .= extendedRepo.core.repoDescription
+      , "homepage" .= extendedRepo.core.repoHomepage
+      , "language" .= (extendedRepo.core.repoLanguage <&> GH.getLanguage)
+      , "stargazers_count" .= extendedRepo.core.repoStargazersCount
+      , "open_issues_count" .= extendedRepo.core.repoOpenIssuesCount
+      , "commits_count" .= (extendedRepo.commitsCount & fromMaybe 0)
+      , "is_archived" .= extendedRepo.core.repoArchived
+      , "created_utc" .= (extendedRepo.core.repoCreatedAt <&> iso8601Show)
+      , "updated_utc" .= (extendedRepo.core.repoUpdatedAt <&> iso8601Show)
+      , "crawled_utc" .= now
+      ]
+
+    insertRequest =
+      setRequestFields
+        airseqWriteToken
+        upsertRepoQuery
+        (KeyMap.fromList variables)
+        initialInsertRequest
+
   insertResponse <- httpLbs insertRequest manager
   print insertResponse
 
@@ -278,34 +280,35 @@ saveRepoInAirsequel saveStrategy extendedRepo = do
 deleteRepo :: Manager -> Text -> Text -> ExtendedRepo -> IO ()
 deleteRepo manager dbEndpoint airseqWriteToken extendedRepo = do
   let
-    deleteRepoQuery :: ExtendedRepo -> Text
-    deleteRepoQuery extRepo =
-      let
-        repo = extRepo.core
-      in
-        [r|
-          mutation DeleteRepo {
-            delete_repos(
-              filter: {
-                github_id: { eq: <<github_id>> }
-              }
-            ) {
-              affected_rows
-              returning {
-                owner
-                name
-                rowid
-              }
+    deleteRepoQuery :: Text
+    deleteRepoQuery =
+      [r|
+        mutation DeleteRepo($github_id: Int!) {
+          delete_repos(
+            filter: {
+              github_id: { eq: $github_id }
+            }
+          ) {
+            affected_rows
+            returning {
+              owner
+              name
+              rowid
             }
           }
-        |]
-          & var "github_id" (repo.repoId & GH.untagId & show)
+        }
+      |]
 
   initialDeleteRequest <- parseRequest $ T.unpack dbEndpoint
+
   let deleteRequest =
         setRequestFields
           airseqWriteToken
-          (deleteRepoQuery extendedRepo)
+          deleteRepoQuery
+          ( KeyMap.fromList
+              ["github_id" .= (extendedRepo.core.repoId & GH.untagId)]
+          )
           initialDeleteRequest
+
   deleteResponse <- httpLbs deleteRequest manager
   print deleteResponse

@@ -39,12 +39,9 @@ import Protolude (
 import Protolude qualified as P
 
 import Control.Arrow ((>>>))
-import Data.Aeson (
-  eitherDecode,
-  encode,
-  object,
-  (.=),
- )
+import Data.Aeson (Value (String), eitherDecode, encode, object, (.=))
+import Data.Aeson.KeyMap (KeyMap)
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.List (lookup)
 import Data.Text qualified as T
 import GHC.Base (String)
@@ -86,7 +83,7 @@ import Text.RawString.QQ (r)
 
 import Airsequel (saveRepoInAirsequel)
 import Types (ExtendedRepo (..), GqlResponse (..), SaveStrategy (..))
-import Utils (loadGitHubToken, mapMSequentially, var)
+import Utils (loadGitHubToken, mapMSequentially)
 
 
 -- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
@@ -113,7 +110,14 @@ commands = do
           (info upload (progDesc "Upload a single repo"))
         <> command
           "search"
-          (info search (progDesc "Search for and upload several repos"))
+          ( info
+              search
+              ( progDesc
+                  "Search for and upload several repos.\n\
+                  \WARNING: If the search query returns too many repos, \
+                  \the result will be truncated."
+              )
+          )
     )
 
 
@@ -249,10 +253,10 @@ getGhHeaders tokenMb =
 execGithubGqlQuery
   :: Maybe Text
   -> Text
-  -> Maybe Text
+  -> KeyMap Value
   -> [ExtendedRepo]
   -> IO [ExtendedRepo]
-execGithubGqlQuery ghTokenMb query nextCursorMb initialRepos = do
+execGithubGqlQuery ghTokenMb query variables initialRepos = do
   manager <- newManager tlsManagerSettings
 
   initialRequest <- parseRequest $ T.unpack "https://api.github.com/graphql"
@@ -265,17 +269,8 @@ execGithubGqlQuery ghTokenMb query nextCursorMb initialRepos = do
               RequestBodyLBS $
                 encode $
                   object
-                    [ "query"
-                        .= ( query
-                              & var
-                                "optionalAfter"
-                                ( nextCursorMb
-                                    <&> ( \cursor ->
-                                            "after: \"" <> cursor <> "\""
-                                        )
-                                    & fromMaybe ""
-                                )
-                           )
+                    [ "query" .= query
+                    , "variables" .= variables
                     ]
           }
 
@@ -295,7 +290,7 @@ execGithubGqlQuery ghTokenMb query nextCursorMb initialRepos = do
 
       let
         repos :: [GH.Repo] = gqlResponse.repos
-        delayBetweenRequests = 1000 -- ms
+        delayBetweenRequests = 500 -- ms
       commitsCounts <-
         mapMSequentially
           delayBetweenRequests
@@ -327,20 +322,29 @@ execGithubGqlQuery ghTokenMb query nextCursorMb initialRepos = do
           execGithubGqlQuery
             ghTokenMb
             query
-            (Just nextCursor)
+            (variables & KeyMap.insert "after" (String nextCursor))
             (initialRepos <> extendedRepos)
 
 
-loadAndSaveReposViaSearch :: Maybe Text -> Text -> Int -> IO [ExtendedRepo]
-loadAndSaveReposViaSearch githubToken searchQuery numRepos = do
+loadAndSaveReposViaSearch
+  :: Maybe Text
+  -> Text
+  -> Int
+  -> Maybe Text
+  -> IO [ExtendedRepo]
+loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
   let gqlQUery =
         [r|
-          {
+          query SearchRepos(
+            $searchQuery: String!
+            $numRepos: Int!
+            $after: String
+          ){
             search(
-              query: "<<searchQuery>>",
-              type: REPOSITORY,
-              first: <<numRepos>>
-              <<optionalAfter>>
+              query: $searchQuery
+              type: REPOSITORY
+              first: $numRepos
+              after: $after
             ) {
               edges {
                 node {
@@ -366,13 +370,16 @@ loadAndSaveReposViaSearch githubToken searchQuery numRepos = do
             }
           }
         |]
-          & var "searchQuery" searchQuery
-          & var "numRepos" (show numRepos)
 
   execGithubGqlQuery
-    githubToken
+    ghTokenMb
     gqlQUery
-    Nothing
+    ( KeyMap.fromList
+        [ "searchQuery" .= searchQuery
+        , "numRepos" .= numRepos
+        , "after" .= afterMb
+        ]
+    )
     []
 
 
@@ -416,7 +423,7 @@ run cliCmd = do
               & T.replace "\n" " "
               & T.strip
 
-      repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery 20
+      repos <- loadAndSaveReposViaSearch ghTokenMb searchQuery 20 Nothing
 
       putText $ "Found " <> show (P.length repos) <> " repos:"
       repos

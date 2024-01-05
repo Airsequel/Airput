@@ -1,11 +1,9 @@
 module Utils (
-  encodeToText,
   loadAirsWriteToken,
   loadDbEndpoint,
   loadDbId,
   loadGitHubToken,
   mapMSequentially,
-  var,
 )
 where
 
@@ -14,29 +12,20 @@ import Protolude (
   Int,
   Maybe (..),
   Text,
-  decodeUtf8,
   liftIO,
   mapM,
   pure,
   putErrText,
   ($),
   (*),
-  (.),
   (<*),
   (<>),
  )
 
 import Control.Concurrent (threadDelay)
-import Data.Aeson (ToJSON, encode)
-import Data.ByteString.Lazy (toStrict)
 import Data.Text qualified as T
 import System.Environment (lookupEnv)
 import System.Exit (die)
-
-
-encodeToText :: (ToJSON a) => a -> Text
-encodeToText =
-  decodeUtf8 . toStrict . encode
 
 
 lookupEnvOrDie :: Text -> IO Text
@@ -80,12 +69,6 @@ loadGitHubToken = do
       pure Nothing
     Just token ->
       pure $ Just $ T.pack token
-
-
--- | Replaces a variable in a string with a value
-var :: Text -> Text -> Text -> Text
-var idName =
-  T.replace ("<<" <> idName <> ">>")
 
 
 mapMSequentially :: Int -> (a -> IO b) -> [a] -> IO [b]
