@@ -4,7 +4,7 @@ cabal-version: 2.2
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 63fc3e8744bf308b5a7b0c2268b75bb440d310bd2dc36e72791d893e12b745c3
+-- hash: 0862c588be00e327ee1b6cc1fac5f380af9fcf1ab0294c48aa90748353d89655
 
 name:           repos-uploader
 version:        0.0.0.0
@@ -42,7 +42,6 @@ library
       aeson
     , base
     , bytestring
-    , github
     , http-client
     , http-client-tls
     , http-link-header
@@ -78,7 +77,6 @@ executable repos-uploader
       aeson
     , base
     , bytestring
-    , github
     , http-client
     , http-client-tls
     , http-link-header

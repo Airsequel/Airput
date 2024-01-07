@@ -7,91 +7,58 @@ import Protolude (
   Int,
   Integer,
   Maybe (..),
-  Proxy (Proxy),
   Show,
   Text,
   mapM,
   pure,
   ($),
   (&),
-  (<&>),
   (>>=),
  )
 
-import Data.Aeson (FromJSON, Value, withObject, (.:), (.:?))
+import Data.Aeson (FromJSON, Object, Value, withObject, (.:), (.:?))
 import Data.Aeson.Types (parseJSON)
-import Data.Time (UTCTime)
-import GitHub qualified as GH
+import Data.Time (UTCTime (UTCTime), fromGregorian, secondsToDiffTime)
 
 
-emptyOwner :: GH.SimpleOwner
-emptyOwner =
-  GH.SimpleOwner
-    { GH.simpleOwnerLogin = ""
-    , GH.simpleOwnerAvatarUrl = GH.URL ""
-    , GH.simpleOwnerId = GH.mkId (Proxy :: Proxy GH.Owner) 0
-    , GH.simpleOwnerUrl = GH.URL ""
-    , GH.simpleOwnerType = GH.OwnerUser
-    }
-
-
-emptyRepo :: GH.Repo
-emptyRepo =
-  GH.Repo
-    { GH.repoOwner = emptyOwner
-    , GH.repoArchived = False
-    , GH.repoCloneUrl = Nothing
-    , GH.repoCreatedAt = Nothing
-    , GH.repoDefaultBranch = Nothing
-    , GH.repoDescription = Nothing
-    , GH.repoDisabled = False
-    , GH.repoForksCount = 0
-    , GH.repoHasDownloads = Nothing
-    , GH.repoHasIssues = Nothing
-    , GH.repoHasPages = Nothing
-    , GH.repoHasProjects = Nothing
-    , GH.repoHasWiki = Nothing
-    , GH.repoHomepage = Nothing
-    , GH.repoHooksUrl = GH.URL ""
-    , GH.repoHtmlUrl = GH.URL ""
-    , GH.repoId = GH.mkId (Proxy :: Proxy GH.Repo) 0
-    , GH.repoLanguage = Nothing
-    , GH.repoName = ""
-    , GH.repoOpenIssuesCount = 0
-    , GH.repoPermissions = Nothing
-    , GH.repoPushedAt = Nothing
-    , GH.repoSize = Nothing
-    , GH.repoStargazersCount = 0
-    , GH.repoSvnUrl = Nothing
-    , GH.repoUpdatedAt = Nothing
-    , GH.repoWatchersCount = 0
-    , GH.repoPrivate = False
-    , GH.repoFork = Nothing
-    , GH.repoUrl = GH.URL ""
-    , GH.repoGitUrl = Nothing
-    , GH.repoSshUrl = Nothing
-    }
-
-
-{-| To make loading data from GitHub GraphQL API easier
-| we also have this simpler (in comparison to GH.Repo) data type
--}
-data RepoObject = RepoObject
-  { owner :: Text
+data Repo = Repo
+  { rowid :: Maybe Int -- Airsequel rowid
+  , owner :: Text
   , name :: Text
   , githubId :: Int
   , stargazerCount :: Int
   , description :: Maybe Text
   , homepageUrl :: Maybe Text
-  , issuesCount :: Int
+  , primaryLanguage :: Maybe Text
+  , openIssuesCount :: Int
   , isArchived :: Bool
   , createdAt :: UTCTime
   , updatedAt :: UTCTime
+  , commitsCount :: Maybe Integer
   }
   deriving (Show, Eq, Generic)
 
 
-instance FromJSON RepoObject where
+emptyRepo :: Repo
+emptyRepo =
+  Repo
+    { rowid = Nothing
+    , owner = ""
+    , name = ""
+    , githubId = 0
+    , stargazerCount = 0
+    , description = Nothing
+    , homepageUrl = Nothing
+    , primaryLanguage = Nothing
+    , openIssuesCount = 0
+    , isArchived = False
+    , createdAt = UTCTime (fromGregorian 1900 1 1) (secondsToDiffTime 0)
+    , updatedAt = UTCTime (fromGregorian 1900 1 1) (secondsToDiffTime 0)
+    , commitsCount = Nothing
+    }
+
+
+instance FromJSON Repo where
   parseJSON = withObject "RepoObject" $ \o -> do
     owner <- o .: "owner" >>= (.: "login")
     name <- o .: "name"
@@ -99,67 +66,73 @@ instance FromJSON RepoObject where
     stargazerCount <- o .: "stargazerCount"
     description <- o .: "description"
     homepageUrl <- o .: "homepageUrl"
-    issuesCount <- o .: "issues" >>= (.: "totalCount")
+    primaryLanguage <- o .: "primaryLanguage" >>= (.: "name")
+    openIssuesCount <- o .: "issues" >>= (.: "totalCount")
     isArchived <- o .: "isArchived"
     createdAt <- o .: "createdAt"
     updatedAt <- o .: "updatedAt"
+    commitsCount <-
+      o .: "defaultBranchRef"
+        >>= (.: "target")
+        >>= (.: "history")
+        >>= (.: "totalCount")
 
-    pure RepoObject{..}
-
-
-repoObjectToRepo :: RepoObject -> GH.Repo
-repoObjectToRepo repoObj =
-  emptyRepo
-    { GH.repoOwner =
-        emptyOwner
-          { GH.simpleOwnerLogin =
-              GH.mkOwnerName repoObj.owner
-          }
-    , GH.repoName = GH.mkRepoName repoObj.name
-    , GH.repoId = GH.mkId (Proxy :: Proxy GH.Repo) repoObj.githubId
-    , GH.repoHomepage = repoObj.homepageUrl
-    , GH.repoDescription = repoObj.description
-    , GH.repoStargazersCount = repoObj.stargazerCount
-    , GH.repoOpenIssuesCount = repoObj.issuesCount
-    , GH.repoArchived = repoObj.isArchived
-    , GH.repoCreatedAt = Just repoObj.createdAt
-    , GH.repoUpdatedAt = Just repoObj.updatedAt
-    }
+    pure Repo{rowid = Nothing, ..}
 
 
-data GqlResponse = GqlResponse
-  { repos :: [GH.Repo]
+-- | Generic GraphQL response
+data GqlRes = GqlRes
+  { gqlData :: Maybe Value
+  , gqlErrors :: Maybe [Object]
+  }
+  deriving (Show, Eq, Generic)
+
+
+instance FromJSON GqlRes where
+  parseJSON = withObject "GqlRes" $ \o -> do
+    gqlData <- o .:? "data"
+    gqlErrors <- o .:? "errors"
+    pure GqlRes{..}
+
+
+data GqlRepoRes = GqlRepoRes
+  { repos :: [Repo]
   , errorsMb :: Maybe Value
   , nextCursorMb :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
 
-instance FromJSON GqlResponse where
-  parseJSON = withObject "GqlResponse" $ \o -> do
+instance FromJSON GqlRepoRes where
+  parseJSON = withObject "GqlRepoRes" $ \o -> do
     data_ <- o .: "data"
     errorsMb <- o .:? "errors"
-    search <- data_ .: "search"
-    edges <- search .: "edges"
-    repos :: [RepoObject] <- edges & mapM (.: "node")
+    searchMb <- data_ .:? "search"
 
-    pageInfo <- search .: "pageInfo"
-    nextCursorMb <- pageInfo .:? "endCursor"
+    case searchMb of
+      Nothing -> do
+        repository <- data_ .: "repository"
+        repo <- parseJSON repository
+        pure
+          GqlRepoRes
+            { repos = [repo]
+            , errorsMb
+            , nextCursorMb = Nothing
+            }
+      Just search -> do
+        edges <- search .: "edges"
+        repos :: [Repo] <- edges & mapM (.: "node")
 
-    pure
-      GqlResponse
-        { repos = repos <&> repoObjectToRepo
-        , errorsMb
-        , nextCursorMb
-        }
+        pageInfo <- search .: "pageInfo"
+        nextCursorMb <- pageInfo .:? "endCursor"
+
+        pure
+          GqlRepoRes
+            { repos = repos
+            , errorsMb
+            , nextCursorMb
+            }
 
 
 data SaveStrategy = OverwriteRepo | AddRepo
-  deriving (Show, Eq)
-
-
-data ExtendedRepo = ExtendedRepo
-  { core :: GH.Repo
-  , commitsCount :: Maybe Integer
-  }
   deriving (Show, Eq)

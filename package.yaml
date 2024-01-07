@@ -18,6 +18,8 @@ dependencies:
   - aeson
   - base
   - bytestring
+  - http-client
+  - http-client-tls
   - http-link-header
   - http-types
   - network-uri
@@ -46,17 +48,9 @@ ghc-options:
 library:
   language: GHC2021
   source-dirs: source
-  dependencies:
-    - http-client-tls
-    - http-client
-    - github
 
 executables:
   repos-uploader:
     language: GHC2021
     source-dirs: app
     main: Main.hs
-    dependencies:
-      - http-client-tls
-      - http-client
-      - github

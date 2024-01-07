@@ -11,7 +11,6 @@ import Protolude (
   Either (Left, Right),
   IO,
   Int,
-  Integer,
   Maybe (..),
   Text,
   elem,
@@ -25,7 +24,6 @@ import Protolude (
   pure,
   putErrText,
   putText,
-  readMaybe,
   show,
   when,
   ($),
@@ -38,16 +36,12 @@ import Protolude (
  )
 import Protolude qualified as P
 
-import Control.Arrow ((>>>))
 import Data.Aeson (Value (String), eitherDecode, encode, object, (.=))
 import Data.Aeson.KeyMap (KeyMap)
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.List (lookup)
 import Data.Text qualified as T
 import GHC.Base (String)
-import GitHub qualified as GH
-import GitHub.Endpoints.Activity.Starring as GH (Auth (OAuth), Repo, untagName)
-import GitHub.Internal.Prelude (fromString)
 import Network.HTTP.Client (
   RequestBody (RequestBodyLBS),
   Response (responseHeaders),
@@ -58,7 +52,6 @@ import Network.HTTP.Client (
   requestBody,
   requestHeaders,
   responseBody,
-  responseStatus,
  )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Link (href, parseLinkHeaderBS)
@@ -70,7 +63,7 @@ import Options.Applicative (
   command,
   execParser,
   fullDesc,
-  header,
+  headerDoc,
   helper,
   hsubparser,
   info,
@@ -84,11 +77,10 @@ import Text.RawString.QQ (r)
 
 import Airsequel (saveRepoInAirsequel)
 import Options.Applicative.Help.Pretty (vsep)
-import Types (ExtendedRepo (..), GqlResponse (..), SaveStrategy (..))
-import Utils (loadGitHubToken, mapMSequentially)
+import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
+import Utils (loadGitHubToken)
 
 
--- TODO: Add CLI flag to choose between OverwriteRepo and AddRepo
 data CliCmd
   = -- | Upload a single repo
     Upload Text
@@ -134,38 +126,19 @@ commands = do
     )
 
 
-formatRepo :: ExtendedRepo -> Text
-formatRepo extendedRepo =
-  let
-    repo = core extendedRepo
-  in
-    "\n\n"
-      <> ("repo_url: " <> show (GH.repoHtmlUrl repo) <> "\n")
-      <> ( "description: "
-            <> (repo.repoDescription & fromMaybe "")
-            <> "\n"
-         )
-      <> ("homepage: " <> (repo.repoHomepage & fromMaybe "") <> "\n")
-      <> ( "language: "
-            <> (repo.repoLanguage <&> GH.getLanguage & fromMaybe "")
-            <> "\n"
-         )
-      <> ("stargazers_count: " <> show (GH.repoStargazersCount repo) <> "\n")
-      <> ( "commits_count: "
-            <> show (extendedRepo & commitsCount & fromMaybe 0)
-            <> "\n"
-         )
-      <> ("open_issues_count: " <> show (GH.repoOpenIssuesCount repo) <> "\n")
-      <> ( "is_archived: " <> (repo.repoArchived & show & T.toLower) <> "\n"
-         )
-      <> ( "created_at: "
-            <> (repo.repoCreatedAt <&> show & fromMaybe "")
-            <> "\n"
-         )
-      <> ( "updated_at: "
-            <> (repo.repoUpdatedAt <&> show & fromMaybe "")
-            <> "\n"
-         )
+formatRepo :: Repo -> Text
+formatRepo repo =
+  "\n\n"
+    <> ("repo_url: github.com/" <> repo.owner <> "/" <> repo.name <> "\n")
+    <> ("description: " <> (repo.description & fromMaybe "") <> "\n")
+    <> ("homepage: " <> (repo.homepageUrl & fromMaybe "") <> "\n")
+    <> ("language: " <> (repo.primaryLanguage & fromMaybe "") <> "\n")
+    <> ("stargazers_count: " <> show repo.stargazerCount <> "\n")
+    <> ("commits_count: " <> show (repo.commitsCount & fromMaybe 0) <> "\n")
+    <> ("open_issues_count: " <> show repo.openIssuesCount <> "\n")
+    <> ("is_archived: " <> (repo.isArchived & show & T.toLower) <> "\n")
+    <> ("created_at: " <> show repo.createdAt <> "\n")
+    <> ("updated_at: " <> show repo.updatedAt <> "\n")
 
 
 -- | Query @Link@ header with @rel=last@ from the request headers
@@ -184,71 +157,54 @@ getLastUrl req = do
   pure $ href nextURI
 
 
-{-| Workaround to get the number of commits for a repo
-| https://stackoverflow.com/a/70610670
--}
-getNumberOfCommits :: Maybe Text -> Repo -> IO (Maybe Integer)
-getNumberOfCommits ghTokenMb repo = do
-  let repoSlug =
-        (repo.repoOwner.simpleOwnerLogin & untagName)
-          <> "/"
-          <> (repo.repoName & untagName)
-
-  putText $ "⏳ Get number of commits for repo " <> repoSlug
-
-  let apiEndpoint =
-        "https://api.github.com/repos/"
-          <> repoSlug
-          <> "/commits?per_page=1"
-
-  manager <- newManager tlsManagerSettings
-  initialRequest <- parseRequest $ T.unpack apiEndpoint
-  let request =
-        initialRequest
-          { method = "HEAD"
-          , requestHeaders = getGhHeaders ghTokenMb
-          }
-
-  response <- httpLbs request manager
-
-  putText $ "✅ Got number of commits for repo " <> repoSlug <> ":"
-  putText $ show response.responseStatus
-  putText $ show response.responseHeaders
-
-  getLastUrl response
-    <&> (show >>> T.pack >>> T.splitOn "&page=")
-    >>= lastMay
-    >>= readMaybe
-      & pure
-
-
 {-| Loads a single repo from GitHub, adds number of commits,
 | and saves it to Airsequel
 -}
-loadAndSaveRepo :: Maybe Text -> SaveStrategy -> Text -> Text -> IO ()
-loadAndSaveRepo ghTokenMb saveStrategy owner name = do
-  let
-    uploadFunc = case ghTokenMb of
-      Nothing -> GH.github'
-      Just ghToken -> GH.github (OAuth (encodeUtf8 ghToken))
-
-  repoResult <-
-    uploadFunc
-      GH.repositoryR
-      (fromString $ T.unpack owner)
-      (fromString $ T.unpack name)
-
-  case repoResult of
-    Left error -> putErrText $ "Error: " <> show error
-    Right repo -> do
-      commitsCount <- getNumberOfCommits ghTokenMb repo
-      let extendedRepo =
-            ExtendedRepo
-              { core = repo
-              , commitsCount = commitsCount
+loadAndSaveRepo :: Maybe Text -> SaveStrategy -> Text -> Text -> IO [Repo]
+loadAndSaveRepo ghTokenMb _TODO_saveStrategy owner name = do
+  let gqlQUery =
+        [r|
+          query GetSingleRepo($owner: String!, $name: String!) {
+            repository(owner: $owner, name: $name) {
+              name
+              owner {
+                login
               }
-      putText $ formatRepo extendedRepo
-      saveRepoInAirsequel saveStrategy extendedRepo
+              databaseId
+              stargazerCount
+              description
+              homepageUrl
+              primaryLanguage {
+                name
+              }
+              issues(states: [OPEN]) {
+                totalCount
+              }
+              isArchived
+              createdAt
+              updatedAt
+              defaultBranchRef {
+                target {
+                  ... on Commit {
+                    history {
+                      totalCount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        |]
+
+  execGithubGqlQuery
+    ghTokenMb
+    gqlQUery
+    ( KeyMap.fromList
+        [ "owner" .= owner
+        , "name" .= name
+        ]
+    )
+    []
 
 
 getGhHeaders :: (P.IsString a) => Maybe Text -> [(a, P.ByteString)]
@@ -263,12 +219,7 @@ getGhHeaders tokenMb =
       Nothing -> []
 
 
-execGithubGqlQuery
-  :: Maybe Text
-  -> Text
-  -> KeyMap Value
-  -> [ExtendedRepo]
-  -> IO [ExtendedRepo]
+execGithubGqlQuery :: Maybe Text -> Text -> KeyMap Value -> [Repo] -> IO [Repo]
 execGithubGqlQuery ghTokenMb query variables initialRepos = do
   manager <- newManager tlsManagerSettings
 
@@ -289,7 +240,7 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
 
   response <- httpLbs request manager
 
-  let gqlResult :: Either String GqlResponse =
+  let gqlResult :: Either String GqlRepoRes =
         response.responseBody & eitherDecode
 
   case gqlResult of
@@ -301,43 +252,45 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
         Just errors -> putErrText $ "GraphQL Errors:\n" <> show errors
         Nothing -> pure ()
 
-      let
-        repos :: [GH.Repo] = gqlResponse.repos
-        delayBetweenRequests = 500 -- ms
-      commitsCounts <-
-        mapMSequentially
-          delayBetweenRequests
-          (getNumberOfCommits ghTokenMb)
-          repos
+      let repos :: [Repo] = gqlResponse.repos
 
-      let extendedRepos =
-            P.zipWith
-              ( \repo commitsCount ->
-                  ExtendedRepo
-                    { core = repo
-                    , commitsCount
-                    }
-              )
-              repos
-              commitsCounts
+      putText $
+        "✅ Received "
+          <> show (P.length repos)
+          <> " repos from GitHub"
 
-      when (P.not $ P.null extendedRepos) $ do
+      repos
+        <&> ( \repo ->
+                repo.owner
+                  <> ("/" :: Text)
+                  <> repo.name
+                  <> (" | stars: " :: Text)
+                  <> show repo.stargazerCount
+                  <> (" | commits: " :: Text)
+                  <> ( repo.commitsCount
+                        <&> show
+                        & fromMaybe "ERROR: Should have a commits count"
+                     )
+            )
+        & mapM_ putText
+
+      when (P.not $ P.null repos) $ do
         putText $
           "⏳ Save "
             <> show (P.length repos)
             <> " repos to Airsequel …"
         -- TODO: Save all repos in one request
-        extendedRepos
+        repos
           & mapM_ (saveRepoInAirsequel OverwriteRepo)
 
       case gqlResponse.nextCursorMb of
-        Nothing -> pure $ initialRepos <> extendedRepos
+        Nothing -> pure $ initialRepos <> repos
         Just nextCursor -> do
           execGithubGqlQuery
             ghTokenMb
             query
             (variables & KeyMap.insert "after" (String nextCursor))
-            (initialRepos <> extendedRepos)
+            (initialRepos <> repos)
 
 
 loadAndSaveReposViaSearch
@@ -345,7 +298,7 @@ loadAndSaveReposViaSearch
   -> Text
   -> Int
   -> Maybe Text
-  -> IO [ExtendedRepo]
+  -> IO [Repo]
 loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
   let gqlQUery =
         [r|
@@ -369,12 +322,26 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
                     stargazerCount
                     description
                     homepageUrl
+                    primaryLanguage { name }
+                    # languages(first: 10) {
+                    #   totalCount
+                    #   nodes { name }
+                    # }
                     issues (states: [OPEN]) {
                       totalCount
                     }
                     isArchived
                     createdAt
                     updatedAt
+                    defaultBranchRef {
+                      target {
+                        ... on Commit {
+                          history {
+                            totalCount
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -414,27 +381,20 @@ run cliCmd = do
         Just owner ->
           case nameMb of
             Nothing -> putErrText "Error: Repo name is missing"
-            Just name ->
-              loadAndSaveRepo
-                ghTokenMb
-                OverwriteRepo
-                owner
-                name
+            Just name -> do
+              _ <-
+                loadAndSaveRepo
+                  ghTokenMb
+                  OverwriteRepo
+                  owner
+                  name
+              pure ()
     Search searchQuery -> do
       let searchQueryNorm = searchQuery & T.replace "\n" " " & T.strip
 
       repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 20 Nothing
 
-      putText $ "Found " <> show (P.length repos) <> " repos:"
-      repos
-        <&> ( \repo ->
-                (repo.core.repoOwner.simpleOwnerLogin & untagName)
-                  <> ("/" :: Text)
-                  <> (repo.core.repoName & untagName)
-                  <> (" " :: Text)
-                  <> show repo.commitsCount
-            )
-        & mapM_ putText
+      putText $ "🏁 Total number of crawled repos: " <> show (P.length repos)
 
       pure ()
 
@@ -445,8 +405,9 @@ main = do
         info
           (commands <**> helper)
           ( fullDesc
-              <> progDesc "Upload repo metadata to Airsequel"
-              <> header "repos-uploader"
+              <> headerDoc (Just "⬆️ Repos Uploader")
+              <> progDesc
+                "Crawl repos from GitHub and upload their metadata to Airsequel"
           )
 
   execParser opts >>= run

@@ -3,26 +3,19 @@ module Utils (
   loadDbEndpoint,
   loadDbId,
   loadGitHubToken,
-  mapMSequentially,
 )
 where
 
 import Protolude (
   IO,
-  Int,
   Maybe (..),
   Text,
-  liftIO,
-  mapM,
   pure,
   putErrText,
   ($),
-  (*),
-  (<*),
   (<>),
  )
 
-import Control.Concurrent (threadDelay)
 import Data.Text qualified as T
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -69,9 +62,3 @@ loadGitHubToken = do
       pure Nothing
     Just token ->
       pure $ Just $ T.pack token
-
-
-mapMSequentially :: Int -> (a -> IO b) -> [a] -> IO [b]
-mapMSequentially delayInMs f xs = do
-  let delayM = liftIO $ threadDelay (delayInMs * 1000)
-  mapM (\x -> f x <* delayM) xs
