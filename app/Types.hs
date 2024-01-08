@@ -117,7 +117,8 @@ instance FromJSON GqlRes where
 
 
 data GqlRepoRes = GqlRepoRes
-  { repos :: [Repo]
+  { repositoryCount :: Integer
+  , repos :: [Repo]
   , errorsMb :: Maybe Value
   , nextCursorMb :: Maybe Text
   }
@@ -136,11 +137,13 @@ instance FromJSON GqlRepoRes where
         repo <- parseJSON repository
         pure
           GqlRepoRes
-            { repos = [repo]
+            { repositoryCount = 1
+            , repos = [repo]
             , errorsMb
             , nextCursorMb = Nothing
             }
       Just search -> do
+        repositoryCount <- search .: "repositoryCount"
         edges <- search .: "edges"
         repos :: [Repo] <- edges & mapM (.: "node")
 
@@ -149,7 +152,8 @@ instance FromJSON GqlRepoRes where
 
         pure
           GqlRepoRes
-            { repos = repos
+            { repositoryCount
+            , repos
             , errorsMb
             , nextCursorMb
             }

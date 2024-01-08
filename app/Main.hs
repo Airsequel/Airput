@@ -33,6 +33,7 @@ import Protolude (
   (<$>),
   (<&>),
   (<>),
+  (>),
   (>>=),
  )
 import Protolude qualified as P
@@ -261,16 +262,28 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
         Just errors -> putErrText $ "GraphQL Errors:\n" <> show errors
         Nothing -> pure ()
 
+      when (P.null initialRepos {- First call -}) $ do
+        putStrLn $
+          "\n📲 Total number of repos: "
+            <> showInt gqlResponse.repositoryCount ""
+
+        when (gqlResponse.repositoryCount > 1000) $ do
+          putText $
+            "\n⚠️ WARNING\n"
+              <> "⚠️ The search returns more than 1000 repos.\n"
+              <> "⚠️ Not all repos will be crawled.\n"
+
       let repos :: [Repo] = gqlResponse.repos
 
       putStrLn $
-        "✅ Received "
+        "\n✅ Received "
           <> showInt (P.length repos) " repos "
           <> "from GitHub"
 
       repos
         <&> ( \repo ->
-                (repo.owner & fromMaybe "")
+                T.replicate 4 " "
+                  <> (repo.owner & fromMaybe "")
                   <> ("/" :: Text)
                   <> (repo.name & fromMaybe "")
                   <> (" | stars: " :: Text)
@@ -316,6 +329,7 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
               first: $numRepos
               after: $after
             ) {
+              repositoryCount
               edges {
                 node {
                   ... on Repository {
@@ -398,8 +412,8 @@ run cliCmd = do
       repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 20 Nothing
 
       putStrLn $
-        "🏁 Total number of crawled repos: "
-          <> showInt (P.length repos) ""
+        "\n🏁🏁🏁 Crawled "
+          <> showInt (P.length repos) " repos in total 🏁🏁🏁\n"
 
       pure ()
 

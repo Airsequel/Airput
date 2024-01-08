@@ -178,7 +178,8 @@ loadRowids manager dbEndpoint airseqWriteToken repos = do
       pure repos
     Right rowids -> do
       P.putStrLn $
-        showInt (P.length rowids) " of "
+        "\nℹ️ "
+          <> showInt (P.length rowids) " of "
           <> showInt (P.length repos) " repos already exist in Airsequel"
 
       pure $
@@ -197,7 +198,7 @@ via a POST request executed by http-client
 -}
 saveReposInAirsequel :: SaveStrategy -> [Repo] -> IO ()
 saveReposInAirsequel saveStrategy repos = do
-  P.putText $ "⏳ Saving " <> show (P.length repos) <> " repos in Airsequel …"
+  P.putText $ "\n⏳ Saving " <> show (P.length repos) <> " repos in Airsequel …"
 
   dbEndpoint <- loadDbEndpoint
   airseqWriteToken <- loadAirsWriteToken
