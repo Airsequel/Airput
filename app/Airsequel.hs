@@ -5,17 +5,20 @@
 
 {-# HLINT ignore "Use maybe" #-}
 {-# HLINT ignore "Use unless" #-}
+{-# HLINT ignore "Use fmap" #-}
 
 module Airsequel where
 
 import Protolude (
   Either (..),
   IO,
-  Int,
+  Integer,
   Maybe (..),
   Text,
   encodeUtf8,
+  filter,
   fromMaybe,
+  isJust,
   print,
   pure,
   putErrLn,
@@ -64,6 +67,7 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (statusCode)
 import Text.RawString.QQ (r)
 
+import Numeric (showInt)
 import Types (GqlRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadAirsWriteToken, loadDbEndpoint)
 
@@ -90,39 +94,9 @@ setRequestFields airseqWriteToken query variables req =
 upsertRepoQuery :: Text
 upsertRepoQuery = do
   [r|
-    mutation InsertRepo (
-      $rowid: Int
-      $github_id: Int!
-      $owner: String!
-      $name: String!
-      $description: String
-      $homepage: String
-      $language: String
-      $stargazers_count: Int
-      $open_issues_count: Int
-      $commits_count: Int
-      $is_archived: Boolean
-      $created_utc: String
-      $updated_utc: String
-      $crawled_utc: String!
-    ) {
+    mutation InsertRepo( $objects: [repos_insert_input!]! ) {
       insert_repos(
-        objects: [{
-          rowid: $rowid
-          github_id: $github_id
-          owner: $owner
-          name: $name
-          description: $description
-          homepage: $homepage
-          language: $language
-          stargazers_count: $stargazers_count
-          open_issues_count: $open_issues_count
-          commits_count: $commits_count
-          is_archived: $is_archived
-          created_utc: $created_utc
-          updated_utc: $updated_utc
-          crawled_utc: $crawled_utc
-        }]
+        objects: $objects
         on_conflict: {
           constraint: rowid
           update_columns: [
@@ -149,81 +123,82 @@ upsertRepoQuery = do
   |]
 
 
--- | Get rowid of a repo with the specified GitHub ID
-getRowid :: Manager -> Text -> Text -> Repo -> IO (Maybe Int)
-getRowid manager dbEndpoint airseqWriteToken repo = do
+-- | Load Airsequel rowid of repos by their GitHub ID
+loadRowids :: Manager -> Text -> Text -> [Repo] -> IO [Repo]
+loadRowids manager dbEndpoint airseqWriteToken repos = do
   let
-    githubId = repo.githubId
-
-    getRowidQuery :: Text
-    getRowidQuery =
+    getReposWithRowidQuery :: Text
+    getReposWithRowidQuery =
       [r|
-        query GetRowid($github_id: Int!) {
-          repos(
-            filter: { github_id: { eq: $github_id } }
-          ) {
+        query GetRowids ($githubIds: [Int]) {
+          repos(filter: { github_id: { in: $githubIds } }) {
+            databaseId: github_id
             rowid
           }
         }
       |]
 
-  initialGetRowidRequest <- parseRequest $ T.unpack dbEndpoint
+  initialGetRowidsRequest <- parseRequest $ T.unpack dbEndpoint
 
-  let getRowidRequest =
+  let getRowidsRequest =
         setRequestFields
           airseqWriteToken
-          getRowidQuery
-          (KeyMap.fromList ["github_id" .= githubId])
-          initialGetRowidRequest
-  getRowidResponse <- httpLbs getRowidRequest manager
+          getReposWithRowidQuery
+          (KeyMap.fromList ["githubIds" .= (repos <&> githubId)])
+          initialGetRowidsRequest
+
+  getReposWithRowidResponse <- httpLbs getRowidsRequest manager
 
   when
-    (getRowidResponse.responseStatus.statusCode /= 200)
-    (putErrText $ show getRowidResponse.responseBody)
+    (getReposWithRowidResponse.responseStatus.statusCode /= 200)
+    (putErrText $ show getReposWithRowidResponse.responseBody)
 
   let
-    repoSlug = repo.owner <> "/" <> repo.name
-    msgBase =
-      "Repo \"" <> repoSlug <> "\" is not"
+    ghIdsWithRowid
+      :: Either [P.Char] [(Integer {- githubId -}, Integer {- rowid -})] =
+        (getReposWithRowidResponse.responseBody & eitherDecode)
+          >>= ( \gqlRes ->
+                  P.flip parseEither gqlRes $ \gqlResObj -> do
+                    gqlData <- gqlResObj .: "data"
+                    gqlData .: "repos"
+              )
+            <&> ( \(reposWithRowid :: [Repo]) ->
+                    reposWithRowid
+                      & filter (\repoWithRowid -> isJust repoWithRowid.rowid)
+                      <&> ( \repoWithRowid ->
+                              ( repoWithRowid.githubId
+                              , repoWithRowid.rowid & fromMaybe 0
+                              )
+                          )
+                )
 
-    rowidResult :: Either [P.Char] Int =
-      ( getRowidResponse.responseBody
-          & eitherDecode
-          :: Either [P.Char] Object
-      )
-        >>= ( \gqlRes ->
-                P.flip parseEither gqlRes $ \gqlResObj -> do
-                  gqlData <- gqlResObj .: "data"
-                  gqlData .: "repos"
-            )
-        >>= ( \case
-                [] -> Left $ T.unpack $ msgBase <> " in Airsequel yet"
-                [repoObj :: Object] -> parseEither (.: "rowid") repoObj
-                _ ->
-                  Left $
-                    T.unpack $
-                      "Error: " <> msgBase <> " unique in Airsequel"
-            )
-
-  case rowidResult of
+  case ghIdsWithRowid of
     Left err -> do
       putErrLn err
-      pure Nothing
-    Right rowid -> do
-      P.putText $
-        "Repo \""
-          <> repoSlug
-          <> "\" is already in Airsequel "
-          <> ("(rowid " <> show rowid <> ") ")
-          <> "and will be updated."
-      pure $ Just rowid
+      pure repos
+    Right rowids -> do
+      P.putStrLn $
+        showInt (P.length rowids) " of "
+          <> showInt (P.length repos) " repos already exist in Airsequel"
+
+      pure $
+        repos <&> \repo ->
+          repo
+            { rowid =
+                rowids
+                  & filter (\(ghId, _) -> ghId == repo.githubId)
+                  & P.head
+                  <&> P.snd
+            }
 
 
-{-| Insert or upsert the repo in Airsequel
+{-| Insert or upsert repos in Airsequel
 via a POST request executed by http-client
 -}
-saveRepoInAirsequel :: SaveStrategy -> Repo -> IO ()
-saveRepoInAirsequel saveStrategy repo = do
+saveReposInAirsequel :: SaveStrategy -> [Repo] -> IO ()
+saveReposInAirsequel saveStrategy repos = do
+  P.putText $ "⏳ Saving " <> show (P.length repos) <> " repos in Airsequel …"
+
   dbEndpoint <- loadDbEndpoint
   airseqWriteToken <- loadAirsWriteToken
 
@@ -231,43 +206,38 @@ saveRepoInAirsequel saveStrategy repo = do
 
   now <- getCurrentTime <&> (iso8601Show >>> T.pack)
 
-  -- Get rowid for the repo to execute an upsert
-  -- if the save strategy is to overwrite
-  rowidMb <-
-    if saveStrategy == OverwriteRepo
-      then
-        getRowid
-          manager
-          dbEndpoint
-          airseqWriteToken
-          repo
-      else pure Nothing
+  -- Get rowid for repos if repos shall be overwritten
+  reposNorm <- case saveStrategy of
+    OverwriteRepo -> loadRowids manager dbEndpoint airseqWriteToken repos
+    AddRepo -> pure repos
 
   initialInsertRequest <- parseRequest $ T.unpack dbEndpoint
 
   let
-    variables =
-      [ "rowid" .= rowidMb
-      , "github_id" .= repo.githubId
-      , "owner" .= repo.owner
-      , "name" .= repo.name
-      , "description" .= repo.description
-      , "homepage" .= repo.homepageUrl
-      , "language" .= repo.primaryLanguage
-      , "stargazers_count" .= repo.stargazerCount
-      , "open_issues_count" .= repo.openIssuesCount
-      , "commits_count" .= (repo.commitsCount & fromMaybe 0)
-      , "is_archived" .= repo.isArchived
-      , "created_utc" .= iso8601Show repo.createdAt
-      , "updated_utc" .= iso8601Show repo.updatedAt
-      , "crawled_utc" .= now
-      ]
+    objects =
+      reposNorm <&> \repo ->
+        object
+          [ "rowid" .= repo.rowid
+          , "github_id" .= repo.githubId
+          , "owner" .= repo.owner
+          , "name" .= repo.name
+          , "description" .= repo.description
+          , "homepage" .= repo.homepageUrl
+          , "language" .= repo.primaryLanguage
+          , "stargazers_count" .= repo.stargazerCount
+          , "open_issues_count" .= repo.openIssuesCount
+          , "commits_count" .= (repo.commitsCount & fromMaybe 0)
+          , "is_archived" .= repo.isArchived
+          , "created_utc" .= (repo.createdAt <&> iso8601Show)
+          , "updated_utc" .= (repo.updatedAt <&> iso8601Show)
+          , "crawled_utc" .= now
+          ]
 
     insertRequest =
       setRequestFields
         airseqWriteToken
         upsertRepoQuery
-        (KeyMap.fromList variables)
+        (KeyMap.fromList ["objects" .= objects])
         initialInsertRequest
 
   insertResponse <- httpLbs insertRequest manager

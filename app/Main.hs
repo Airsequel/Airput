@@ -23,6 +23,7 @@ import Protolude (
   mempty,
   pure,
   putErrText,
+  putStrLn,
   putText,
   show,
   when,
@@ -75,7 +76,8 @@ import Options.Applicative (
  )
 import Text.RawString.QQ (r)
 
-import Airsequel (saveRepoInAirsequel)
+import Airsequel (saveReposInAirsequel)
+import Numeric (showInt)
 import Options.Applicative.Help.Pretty (vsep)
 import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadGitHubToken)
@@ -127,9 +129,14 @@ commands = do
 
 
 formatRepo :: Repo -> Text
-formatRepo repo =
+formatRepo repo = do
+  let repoSlug =
+        (repo.owner & fromMaybe "")
+          <> "/"
+          <> (repo.name & fromMaybe "")
+
   "\n\n"
-    <> ("repo_url: github.com/" <> repo.owner <> "/" <> repo.name <> "\n")
+    <> ("repo_url: github.com/" <> repoSlug <> "\n")
     <> ("description: " <> (repo.description & fromMaybe "") <> "\n")
     <> ("homepage: " <> (repo.homepageUrl & fromMaybe "") <> "\n")
     <> ("language: " <> (repo.primaryLanguage & fromMaybe "") <> "\n")
@@ -221,6 +228,8 @@ getGhHeaders tokenMb =
 
 execGithubGqlQuery :: Maybe Text -> Text -> KeyMap Value -> [Repo] -> IO [Repo]
 execGithubGqlQuery ghTokenMb query variables initialRepos = do
+  putText "\n▶️ Query a batch of repos from GitHub …"
+
   manager <- newManager tlsManagerSettings
 
   initialRequest <- parseRequest $ T.unpack "https://api.github.com/graphql"
@@ -254,16 +263,16 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
 
       let repos :: [Repo] = gqlResponse.repos
 
-      putText $
+      putStrLn $
         "✅ Received "
-          <> show (P.length repos)
-          <> " repos from GitHub"
+          <> showInt (P.length repos) " repos "
+          <> "from GitHub"
 
       repos
         <&> ( \repo ->
-                repo.owner
+                (repo.owner & fromMaybe "")
                   <> ("/" :: Text)
-                  <> repo.name
+                  <> (repo.name & fromMaybe "")
                   <> (" | stars: " :: Text)
                   <> show repo.stargazerCount
                   <> (" | commits: " :: Text)
@@ -275,13 +284,7 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
         & mapM_ putText
 
       when (P.not $ P.null repos) $ do
-        putText $
-          "⏳ Save "
-            <> show (P.length repos)
-            <> " repos to Airsequel …"
-        -- TODO: Save all repos in one request
-        repos
-          & mapM_ (saveRepoInAirsequel OverwriteRepo)
+        saveReposInAirsequel OverwriteRepo repos
 
       case gqlResponse.nextCursorMb of
         Nothing -> pure $ initialRepos <> repos
@@ -394,7 +397,9 @@ run cliCmd = do
 
       repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 20 Nothing
 
-      putText $ "🏁 Total number of crawled repos: " <> show (P.length repos)
+      putStrLn $
+        "🏁 Total number of crawled repos: "
+          <> showInt (P.length repos) ""
 
       pure ()
 

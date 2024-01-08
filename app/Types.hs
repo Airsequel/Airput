@@ -1,10 +1,9 @@
 module Types where
 
 import Protolude (
-  Bool (False),
+  Bool (..),
   Eq,
   Generic,
-  Int,
   Integer,
   Maybe (..),
   Show,
@@ -18,22 +17,22 @@ import Protolude (
 
 import Data.Aeson (FromJSON, Object, Value, withObject, (.:), (.:?))
 import Data.Aeson.Types (parseJSON)
-import Data.Time (UTCTime (UTCTime), fromGregorian, secondsToDiffTime)
+import Data.Time (UTCTime)
 
 
 data Repo = Repo
-  { rowid :: Maybe Int -- Airsequel rowid
-  , owner :: Text
-  , name :: Text
-  , githubId :: Int
-  , stargazerCount :: Int
+  { githubId :: Integer
+  , rowid :: Maybe Integer -- Airsequel rowid
+  , owner :: Maybe Text
+  , name :: Maybe Text
+  , stargazerCount :: Maybe Integer
   , description :: Maybe Text
   , homepageUrl :: Maybe Text
   , primaryLanguage :: Maybe Text
-  , openIssuesCount :: Int
-  , isArchived :: Bool
-  , createdAt :: UTCTime
-  , updatedAt :: UTCTime
+  , openIssuesCount :: Maybe Integer
+  , isArchived :: Maybe Bool
+  , createdAt :: Maybe UTCTime
+  , updatedAt :: Maybe UTCTime
   , commitsCount :: Maybe Integer
   }
   deriving (Show, Eq, Generic)
@@ -42,42 +41,64 @@ data Repo = Repo
 emptyRepo :: Repo
 emptyRepo =
   Repo
-    { rowid = Nothing
-    , owner = ""
-    , name = ""
-    , githubId = 0
-    , stargazerCount = 0
+    { githubId = 0
+    , rowid = Nothing
+    , owner = Nothing
+    , name = Nothing
+    , stargazerCount = Nothing
     , description = Nothing
     , homepageUrl = Nothing
     , primaryLanguage = Nothing
-    , openIssuesCount = 0
-    , isArchived = False
-    , createdAt = UTCTime (fromGregorian 1900 1 1) (secondsToDiffTime 0)
-    , updatedAt = UTCTime (fromGregorian 1900 1 1) (secondsToDiffTime 0)
+    , openIssuesCount = Nothing
+    , isArchived = Nothing
+    , createdAt = Nothing
+    , updatedAt = Nothing
     , commitsCount = Nothing
     }
 
 
 instance FromJSON Repo where
   parseJSON = withObject "RepoObject" $ \o -> do
-    owner <- o .: "owner" >>= (.: "login")
-    name <- o .: "name"
     githubId <- o .: "databaseId"
-    stargazerCount <- o .: "stargazerCount"
-    description <- o .: "description"
-    homepageUrl <- o .: "homepageUrl"
-    primaryLanguage <- o .: "primaryLanguage" >>= (.: "name")
-    openIssuesCount <- o .: "issues" >>= (.: "totalCount")
-    isArchived <- o .: "isArchived"
-    createdAt <- o .: "createdAt"
-    updatedAt <- o .: "updatedAt"
-    commitsCount <-
-      o .: "defaultBranchRef"
-        >>= (.: "target")
-        >>= (.: "history")
-        >>= (.: "totalCount")
+    rowid <- o .:? "rowid"
 
-    pure Repo{rowid = Nothing, ..}
+    ownerMb <- o .:? "owner"
+    owner <- case ownerMb of
+      Nothing -> pure Nothing
+      Just ownerObj -> ownerObj .: "login"
+
+    nameMb <- o .:? "name"
+    name <- case nameMb of
+      Nothing -> pure Nothing
+      Just name -> pure $ Just name
+
+    stargazerCount <- o .:? "stargazerCount"
+    description <- o .:? "description"
+    homepageUrl <- o .:? "homepageUrl"
+
+    primaryLanguageMb <- o .:? "primaryLanguage"
+    primaryLanguage <- case primaryLanguageMb of
+      Nothing -> pure Nothing
+      Just langObj -> langObj .: "name"
+
+    openIssuesCountMb <- o .:? "issues"
+    openIssuesCount <- case openIssuesCountMb of
+      Nothing -> pure Nothing
+      Just issuesObj -> issuesObj .: "totalCount"
+
+    isArchived <- o .:? "isArchived"
+    createdAt <- o .:? "createdAt"
+    updatedAt <- o .:? "updatedAt"
+
+    defaultBranchRef <- o .:? "defaultBranchRef"
+    commitsCount <- case defaultBranchRef of
+      Nothing -> pure Nothing
+      Just branchRef ->
+        branchRef .: "target"
+          >>= (.: "history")
+          >>= (.: "totalCount")
+
+    pure Repo{..}
 
 
 -- | Generic GraphQL response
