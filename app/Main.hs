@@ -85,34 +85,38 @@ import Utils (loadGitHubToken)
 
 
 data CliCmd
-  = -- | Upload a single repo
-    Upload Text
-  | -- | Search for repos and upload them
-    Search Text
+  = -- | Upload metadata for a single GitHub repo
+    GithubUpload Text
+  | -- | Search for GitHub repos and upload their metadata
+    GithubSearch Text
 
 
 commands :: Parser CliCmd
 commands = do
   let
-    upload :: Parser CliCmd
-    upload = Upload <$> argument str (metavar "REPO_SLUG")
+    githubUpload :: Parser CliCmd
+    githubUpload = GithubUpload <$> argument str (metavar "REPO_SLUG")
 
-    search :: Parser CliCmd
-    search = Search <$> argument str (metavar "SEARCH_QUERY")
+    githubSearch :: Parser CliCmd
+    githubSearch = GithubSearch <$> argument str (metavar "SEARCH_QUERY")
 
   hsubparser
     ( mempty
         <> command
-          "upload"
-          (info upload (progDesc "Upload a single repo"))
-        <> command
-          "search"
+          "github-upload"
           ( info
-              search
+              githubUpload
+              (progDesc "Upload metadata for a single GitHub repo")
+          )
+        <> command
+          "github-search"
+          ( info
+              githubSearch
               ( progDescDoc $
                   Just $
                     vsep
-                      [ "Search for and upload several repos."
+                      [ "Search for GitHub repos and upload their metadata."
+                      , ""
                       , "WARNING: If the search returns more than 1000 repos,"
                       , "  the results will be truncated."
                       , ""
@@ -120,8 +124,7 @@ commands = do
                       , "- language:haskell"
                       , "- stars:>=10"
                       , "- stars:10..50"
-                      , "- sort:updated-desc"
-                      , "- sort:stars-asc"
+                      , "- created:2023-10"
                       , "- archived:true"
                       ]
               )
@@ -217,7 +220,7 @@ loadAndSaveRepo ghTokenMb _TODO_saveStrategy owner name = do
 
 getGhHeaders :: (P.IsString a) => Maybe Text -> [(a, P.ByteString)]
 getGhHeaders tokenMb =
-  [ ("User-Agent", "repos-uploader")
+  [ ("User-Agent", "airput")
   , ("Accept", "application/vnd.github+json")
   , ("X-GitHub-Api-Version", "2022-11-28")
   ]
@@ -387,7 +390,7 @@ run cliCmd = do
   ghTokenMb <- loadGitHubToken
 
   case cliCmd of
-    Upload repoSlug -> do
+    GithubUpload repoSlug -> do
       let
         fragments = repoSlug & T.splitOn "/"
         ownerMb = fragments & headMay
@@ -406,7 +409,7 @@ run cliCmd = do
                   owner
                   name
               pure ()
-    Search searchQuery -> do
+    GithubSearch searchQuery -> do
       let searchQueryNorm = searchQuery & T.replace "\n" " " & T.strip
 
       repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 20 Nothing
@@ -424,9 +427,9 @@ main = do
         info
           (commands <**> helper)
           ( fullDesc
-              <> headerDoc (Just "⬆️ Repos Uploader")
+              <> headerDoc (Just "⬆️ Airput ⬆️")
               <> progDesc
-                "Crawl repos from GitHub and upload their metadata to Airsequel"
+                "CLI tool for populating Airsequel with data."
           )
 
   execParser opts >>= run

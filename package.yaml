@@ -1,10 +1,8 @@
-name: repos-uploader
+name: airput
 version: 0.0.0.0
-synopsis: |
-  Download metadata for a list of GitHub repos and save it to Airsequel
-description: |
-  For more information check out the readme.
-homepage: https://github.com/Airsequel/repos-uploader#readme
+synopsis: CLI tool for populating Airsequel with data.
+description: For more information check out the readme.
+homepage: https://github.com/Airsequel/Airput#readme
 license: AGPL-3.0-or-later
 author: Adrian Sieber
 maintainer: adrian@feram.io
@@ -50,7 +48,7 @@ library:
   source-dirs: source
 
 executables:
-  repos-uploader:
+  airput:
     language: GHC2021
     source-dirs: app
     main: Main.hs

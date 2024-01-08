@@ -3,16 +3,13 @@ cabal-version: 2.2
 -- This file has been generated from package.yaml by hpack version 0.36.0.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: 0862c588be00e327ee1b6cc1fac5f380af9fcf1ab0294c48aa90748353d89655
 
-name:           repos-uploader
+name:           airput
 version:        0.0.0.0
-synopsis:       Download metadata for a list of GitHub repos and save it to Airsequel
-
+synopsis:       CLI tool for populating Airsequel with data.
 description:    For more information check out the readme.
 category:       Web
-homepage:       https://github.com/Airsequel/repos-uploader#readme
+homepage:       https://github.com/Airsequel/Airput#readme
 author:         Adrian Sieber
 maintainer:     adrian@feram.io
 copyright:      Adrian Sieber
@@ -25,9 +22,9 @@ library
   exposed-modules:
       Lib
   other-modules:
-      Paths_repos_uploader
+      Paths_airput
   autogen-modules:
-      Paths_repos_uploader
+      Paths_airput
   hs-source-dirs:
       source
   default-extensions:
@@ -54,15 +51,15 @@ library
     , time
   default-language: GHC2021
 
-executable repos-uploader
+executable airput
   main-is: Main.hs
   other-modules:
       Airsequel
       Types
       Utils
-      Paths_repos_uploader
+      Paths_airput
   autogen-modules:
-      Paths_repos_uploader
+      Paths_airput
   hs-source-dirs:
       app
   default-extensions:

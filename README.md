@@ -1,6 +1,7 @@
-# Repos Uploader
+# Airput
 
-Load metadata for a list of GitHub repos and store it in Airsequel.
+CLI tool for populating Airsequel with data.
+Includes a crawler for metadata of GitHub repos.
 
 
 # TODOs
