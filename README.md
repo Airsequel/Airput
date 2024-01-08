@@ -10,6 +10,7 @@ Includes a crawler for metadata of GitHub repos.
 - [ ] Add subcommand to load list of repos from Airsequel and update them
 - [ ] Add CLI flag to choose between `OverwriteRepo` and `AddRepo`
 - [ ] Store all languages for a repo
+- [ ] Store if account is a person or an organization
 
 
 ## Related

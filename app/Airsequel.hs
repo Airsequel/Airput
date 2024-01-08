@@ -12,6 +12,7 @@ module Airsequel where
 import Protolude (
   Either (..),
   IO,
+  Int,
   Integer,
   Maybe (..),
   Text,
@@ -67,7 +68,6 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (statusCode)
 import Text.RawString.QQ (r)
 
-import Numeric (showInt)
 import Types (GqlRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadAirsWriteToken, loadDbEndpoint)
 
@@ -177,10 +177,12 @@ loadRowids manager dbEndpoint airseqWriteToken repos = do
       putErrLn err
       pure repos
     Right rowids -> do
-      P.putStrLn $
+      P.putText $
         "\nℹ️ "
-          <> showInt (P.length rowids) " of "
-          <> showInt (P.length repos) " repos already exist in Airsequel"
+          <> show @Int (P.length rowids)
+          <> " of "
+          <> show @Int (P.length repos)
+          <> " repos already exist in Airsequel"
 
       pure $
         repos <&> \repo ->
@@ -198,7 +200,8 @@ via a POST request executed by http-client
 -}
 saveReposInAirsequel :: SaveStrategy -> [Repo] -> IO ()
 saveReposInAirsequel saveStrategy repos = do
-  P.putText $ "\n⏳ Saving " <> show (P.length repos) <> " repos in Airsequel …"
+  P.putText $
+    "\n⏳ Saving " <> show @Int (P.length repos) <> " repos in Airsequel …"
 
   dbEndpoint <- loadDbEndpoint
   airseqWriteToken <- loadAirsWriteToken
@@ -254,7 +257,7 @@ saveReposInAirsequel saveStrategy repos = do
   case gqlRes of
     Left err -> do
       putErrText "Error parsing GraphQL response:"
-      P.putStrLn err
+      putErrLn err
     Right GqlRes{gqlErrors} ->
       case gqlErrors of
         Nothing -> pure ()

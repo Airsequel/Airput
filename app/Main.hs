@@ -11,6 +11,7 @@ import Protolude (
   Either (Left, Right),
   IO,
   Int,
+  Integer,
   Maybe (..),
   Text,
   elem,
@@ -23,7 +24,6 @@ import Protolude (
   mempty,
   pure,
   putErrText,
-  putStrLn,
   putText,
   show,
   when,
@@ -78,7 +78,6 @@ import Options.Applicative (
 import Text.RawString.QQ (r)
 
 import Airsequel (saveReposInAirsequel)
-import Numeric (showInt)
 import Options.Applicative.Help.Pretty (vsep)
 import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadGitHubToken)
@@ -130,26 +129,6 @@ commands = do
               )
           )
     )
-
-
-formatRepo :: Repo -> Text
-formatRepo repo = do
-  let repoSlug =
-        (repo.owner & fromMaybe "")
-          <> "/"
-          <> (repo.name & fromMaybe "")
-
-  "\n\n"
-    <> ("repo_url: github.com/" <> repoSlug <> "\n")
-    <> ("description: " <> (repo.description & fromMaybe "") <> "\n")
-    <> ("homepage: " <> (repo.homepageUrl & fromMaybe "") <> "\n")
-    <> ("language: " <> (repo.primaryLanguage & fromMaybe "") <> "\n")
-    <> ("stargazers_count: " <> show repo.stargazerCount <> "\n")
-    <> ("commits_count: " <> show (repo.commitsCount & fromMaybe 0) <> "\n")
-    <> ("open_issues_count: " <> show repo.openIssuesCount <> "\n")
-    <> ("is_archived: " <> (repo.isArchived & show & T.toLower) <> "\n")
-    <> ("created_at: " <> show repo.createdAt <> "\n")
-    <> ("updated_at: " <> show repo.updatedAt <> "\n")
 
 
 -- | Query @Link@ header with @rel=last@ from the request headers
@@ -266,9 +245,9 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
         Nothing -> pure ()
 
       when (P.null initialRepos {- First call -}) $ do
-        putStrLn $
+        putText $
           "\n📲 Total number of repos: "
-            <> showInt gqlResponse.repositoryCount ""
+            <> show @Integer gqlResponse.repositoryCount
 
         when (gqlResponse.repositoryCount > 1000) $ do
           putText $
@@ -278,10 +257,10 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
 
       let repos :: [Repo] = gqlResponse.repos
 
-      putStrLn $
+      putText $
         "\n✅ Received "
-          <> showInt (P.length repos) " repos "
-          <> "from GitHub"
+          <> show @Int (P.length repos)
+          <> " repos from GitHub"
 
       repos
         <&> ( \repo ->
@@ -290,10 +269,10 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
                   <> ("/" :: Text)
                   <> (repo.name & fromMaybe "")
                   <> (" | stars: " :: Text)
-                  <> show repo.stargazerCount
+                  <> show @Integer (repo.stargazerCount & fromMaybe 0)
                   <> (" | commits: " :: Text)
                   <> ( repo.commitsCount
-                        <&> show
+                        <&> show @Integer
                         & fromMaybe "ERROR: Should have a commits count"
                      )
             )
@@ -414,9 +393,10 @@ run cliCmd = do
 
       repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 20 Nothing
 
-      putStrLn $
-        "\n🏁🏁🏁 Crawled "
-          <> showInt (P.length repos) " repos in total 🏁🏁🏁\n"
+      putText $
+        "\n🏁 Crawled "
+          <> show @Int (P.length repos)
+          <> " for search query 🏁\n"
 
       pure ()
 
