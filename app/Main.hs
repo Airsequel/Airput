@@ -20,6 +20,7 @@ import Protolude (
   fromMaybe,
   headMay,
   lastMay,
+  many,
   mapM_,
   mempty,
   pure,
@@ -78,6 +79,7 @@ import Options.Applicative (
 import Text.RawString.QQ (r)
 
 import Airsequel (saveReposInAirsequel)
+import Control.Arrow ((>>>))
 import Options.Applicative.Help.Pretty (vsep)
 import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadGitHubToken)
@@ -87,7 +89,7 @@ data CliCmd
   = -- | Upload metadata for a single GitHub repo
     GithubUpload Text
   | -- | Search for GitHub repos and upload their metadata
-    GithubSearch Text
+    GithubSearch [Text]
 
 
 commands :: Parser CliCmd
@@ -97,7 +99,7 @@ commands = do
     githubUpload = GithubUpload <$> argument str (metavar "REPO_SLUG")
 
     githubSearch :: Parser CliCmd
-    githubSearch = GithubSearch <$> argument str (metavar "SEARCH_QUERY")
+    githubSearch = GithubSearch <$> many (argument str (metavar "SEARCH_QUERY"))
 
   hsubparser
     ( mempty
@@ -116,7 +118,10 @@ commands = do
                     vsep
                       [ "Search for GitHub repos and upload their metadata."
                       , ""
-                      , "WARNING: If the search returns more than 1000 repos,"
+                      , "If several search queries are provided, they will be"
+                      , "  executed one after the other."
+                      , ""
+                      , "WARNING: If a search returns more than 1000 repos,"
                       , "  the results will be truncated."
                       , ""
                       , "Good search options are:"
@@ -388,17 +393,25 @@ run cliCmd = do
                   owner
                   name
               pure ()
-    GithubSearch searchQuery -> do
-      let searchQueryNorm = searchQuery & T.replace "\n" " " & T.strip
+    GithubSearch searchQueries -> do
+      let searchQueriesNorm = searchQueries <&> (T.replace "\n" " " >>> T.strip)
 
-      repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 20 Nothing
+      allRepos <- P.forM searchQueriesNorm $ \searchQueryNorm -> do
+        repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 50 Nothing
+
+        putText $
+          "\n🏁 Crawled "
+            <> show @Int (P.length repos)
+            <> " repos with search query:\n"
+            <> searchQueryNorm
+            <> "\n"
+
+        pure repos
 
       putText $
-        "\n🏁 Crawled "
-          <> show @Int (P.length repos)
-          <> " for search query 🏁\n"
-
-      pure ()
+        "\n🏁🏁🏁 Crawled "
+          <> show @Int (P.length $ P.concat allRepos)
+          <> " repos in total 🏁🏁🏁\n"
 
 
 main :: IO ()

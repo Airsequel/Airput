@@ -4,9 +4,39 @@ CLI tool for populating Airsequel with data.
 Includes a crawler for metadata of GitHub repos.
 
 
-# TODOs
+## Usage
 
-- [ ] Support specifying several search queries
+```txt
+⬆️ Airput ⬆️
+
+Usage: airput COMMAND
+
+  CLI tool for populating Airsequel with data.
+
+Available options:
+  -h,--help                Show this help text
+
+Available commands:
+  github-upload            Upload metadata for a single GitHub repo
+  github-search            Search for GitHub repos and upload their metadata.
+
+                           If several search queries are provided, they will be
+                             executed one after the other.
+
+                           WARNING: If a search returns more than 1000 repos,
+                             the results will be truncated.
+
+                           Good search options are:
+                           - language:haskell
+                           - stars:>=10
+                           - stars:10..50
+                           - created:2023-10
+                           - archived:true
+```
+
+
+## TODOs
+
 - [ ] Add subcommand to load list of repos from Airsequel and update them
 - [ ] Add CLI flag to choose between `OverwriteRepo` and `AddRepo`
 - [ ] Store all languages for a repo
