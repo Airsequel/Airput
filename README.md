@@ -37,6 +37,9 @@ Available commands:
 
 ## TODOs
 
+- [ ] Add a column repo.exclusion_reason
+      If `!= NULL` repo should be excluded from further processing
+      E.g. for forks, mirrors, etc.
 - [ ] Add subcommand to load list of repos from Airsequel and update them
 - [ ] Add CLI flag to choose between `OverwriteRepo` and `AddRepo`
 - [ ] Store all languages for a repo
