@@ -17,6 +17,8 @@ Available options:
   -h,--help                Show this help text
 
 Available commands:
+  upload                   Upload files to a database via the REST API. Expects
+                           3 columns: `name`, `filetype`, and `content`.
   github-upload            Upload metadata for a single GitHub repo
   github-search            Search for GitHub repos and upload their metadata.
 
