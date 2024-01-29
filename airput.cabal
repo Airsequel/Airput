@@ -39,6 +39,8 @@ library
       aeson
     , base
     , bytestring
+    , directory
+    , filepath
     , http-client
     , http-client-tls
     , http-link-header
@@ -49,12 +51,14 @@ library
     , raw-strings-qq
     , text
     , time
+    , vector
   default-language: GHC2021
 
 executable airput
   main-is: Main.hs
   other-modules:
       Airsequel
+      FileUploader
       Types
       Utils
       Paths_airput
@@ -74,6 +78,8 @@ executable airput
       aeson
     , base
     , bytestring
+    , directory
+    , filepath
     , http-client
     , http-client-tls
     , http-link-header
@@ -84,4 +90,5 @@ executable airput
     , raw-strings-qq
     , text
     , time
+    , vector
   default-language: GHC2021

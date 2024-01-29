@@ -16,6 +16,8 @@ dependencies:
   - aeson
   - base
   - bytestring
+  - directory
+  - filepath
   - http-client
   - http-client-tls
   - http-link-header
@@ -26,6 +28,7 @@ dependencies:
   - raw-strings-qq
   - text
   - time
+  - vector
 
 default-extensions:
   - ImportQualifiedPost

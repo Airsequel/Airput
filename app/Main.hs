@@ -7,16 +7,13 @@
 module Main where
 
 import Protolude (
-  Bool (..),
   Either (Left, Right),
   IO,
   Int,
   Integer,
   Maybe (..),
   Text,
-  elem,
   encodeUtf8,
-  find,
   fromMaybe,
   headMay,
   lastMay,
@@ -30,24 +27,23 @@ import Protolude (
   when,
   ($),
   (&),
-  (.),
   (<$>),
   (<&>),
+  (<*>),
   (<>),
   (>),
   (>>=),
  )
 import Protolude qualified as P
 
+import Control.Arrow ((>>>))
 import Data.Aeson (Value (String), eitherDecode, encode, object, (.=))
 import Data.Aeson.KeyMap (KeyMap)
 import Data.Aeson.KeyMap qualified as KeyMap
-import Data.List (lookup)
 import Data.Text qualified as T
 import GHC.Base (String)
 import Network.HTTP.Client (
   RequestBody (RequestBodyLBS),
-  Response (responseHeaders),
   httpLbs,
   method,
   newManager,
@@ -57,9 +53,6 @@ import Network.HTTP.Client (
   responseBody,
  )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Network.HTTP.Link (href, parseLinkHeaderBS)
-import Network.HTTP.Link.Types (Link, LinkParam (..), linkParams)
-import Network.URI (URI)
 import Options.Applicative (
   Parser,
   argument,
@@ -67,26 +60,39 @@ import Options.Applicative (
   execParser,
   fullDesc,
   headerDoc,
+  help,
   helper,
   hsubparser,
   info,
+  long,
   metavar,
   progDesc,
   progDescDoc,
+  showDefault,
+  some,
   str,
+  strOption,
+  value,
   (<**>),
  )
+import Options.Applicative.Help.Pretty (vsep)
 import Text.RawString.QQ (r)
 
 import Airsequel (saveReposInAirsequel)
-import Control.Arrow ((>>>))
-import Options.Applicative.Help.Pretty (vsep)
+import FileUploader (uploadFiles)
 import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadGitHubToken)
 
 
 data CliCmd
-  = -- | Upload metadata for a single GitHub repo
+  = -- | Upload files
+    FileUpload
+      { domain :: [P.Char]
+      , dbId :: [P.Char]
+      , tableName :: [P.Char]
+      , paths :: [P.FilePath]
+      }
+  | -- | Upload metadata for a single GitHub repo
     GithubUpload Text
   | -- | Search for GitHub repos and upload their metadata
     GithubSearch [Text]
@@ -95,14 +101,47 @@ data CliCmd
 commands :: Parser CliCmd
 commands = do
   let
+    fileUpload :: Parser CliCmd
+    fileUpload =
+      FileUpload
+        <$> strOption
+          ( long "domain"
+              <> metavar "DOMAIN_NAME"
+              <> help "Domain to upload files to"
+              <> showDefault
+              <> value "https://www.airsequel.com"
+          )
+        <*> strOption
+          ( long "dbid"
+              <> metavar "DATABASE_ID"
+              <> help "Database ID to upload files to"
+          )
+        <*> strOption
+          ( long "tablename"
+              <> metavar "TABLE_NAME"
+              <> help "Table name to upload files to"
+          )
+        <*> some (argument str (metavar "FILE/DIR..."))
+
     githubUpload :: Parser CliCmd
-    githubUpload = GithubUpload <$> argument str (metavar "REPO_SLUG")
+    githubUpload =
+      GithubUpload <$> argument str (metavar "REPO_SLUG")
 
     githubSearch :: Parser CliCmd
-    githubSearch = GithubSearch <$> many (argument str (metavar "SEARCH_QUERY"))
+    githubSearch =
+      GithubSearch <$> many (argument str (metavar "SEARCH_QUERY"))
 
   hsubparser
     ( mempty
+        <> command
+          "upload"
+          ( info
+              fileUpload
+              ( progDesc
+                  "Upload files to a database via the REST API. \
+                  \Expects 3 columns: `name`, `filetype`, and `content`."
+              )
+          )
         <> command
           "github-upload"
           ( info
@@ -134,22 +173,6 @@ commands = do
               )
           )
     )
-
-
--- | Query @Link@ header with @rel=last@ from the request headers
-getLastUrl :: Response a -> Maybe URI
-getLastUrl req = do
-  let
-    isRelNext :: Link uri -> Bool
-    isRelNext = elem relNextLinkParam . linkParams
-
-    relNextLinkParam :: (LinkParam, Text)
-    relNextLinkParam = (Rel, "last")
-
-  linkHeader <- lookup "Link" (responseHeaders req)
-  links <- parseLinkHeaderBS linkHeader
-  nextURI <- find isRelNext links
-  pure $ href nextURI
 
 
 {-| Loads a single repo from GitHub, adds number of commits,
@@ -371,10 +394,12 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
 -- | Function to handle the execution of commands
 run :: CliCmd -> IO ()
 run cliCmd = do
-  ghTokenMb <- loadGitHubToken
-
   case cliCmd of
+    FileUpload{domain, dbId, tableName, paths} -> do
+      uploadFiles (T.pack domain) (T.pack dbId) (T.pack tableName) paths
+    --
     GithubUpload repoSlug -> do
+      ghTokenMb <- loadGitHubToken
       let
         fragments = repoSlug & T.splitOn "/"
         ownerMb = fragments & headMay
@@ -393,7 +418,9 @@ run cliCmd = do
                   owner
                   name
               pure ()
+    --
     GithubSearch searchQueries -> do
+      ghTokenMb <- loadGitHubToken
       let searchQueriesNorm = searchQueries <&> (T.replace "\n" " " >>> T.strip)
 
       allRepos <- P.forM searchQueriesNorm $ \searchQueryNorm -> do
