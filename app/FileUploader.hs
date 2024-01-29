@@ -40,6 +40,7 @@ import Network.HTTP.Client (
   httpLbs,
   newManager,
   parseRequest,
+  requestHeaders,
  )
 import Network.HTTP.Client.MultipartFormData (formDataBody, partFileSource)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -92,6 +93,7 @@ getFilesSorted path = do
     & filterM (doesFileExist . (path </>))
     <&> ( P.filter (/= ".DS_Store")
             >>> P.sort
+            >>> P.map (path </>)
         )
 
 
@@ -107,8 +109,8 @@ createSQLQuery tableName fileData =
     <> "RETURNING rowid"
 
 
-uploadFiles :: Text -> Text -> Text -> [FilePath] -> IO ()
-uploadFiles domain dbId tableName paths = do
+uploadFiles :: Text -> Text -> Text -> Text -> [FilePath] -> IO ()
+uploadFiles domain airseqWriteToken dbId tableName paths = do
   manager <- newManager tlsManagerSettings
 
   fileLists <- P.forM paths $ \filePath -> do
@@ -136,7 +138,10 @@ uploadFiles domain dbId tableName paths = do
         initialRequest
           { method = "POST"
           , requestBody = RequestBodyLBS $ encode $ object ["query" .= query]
-          , requestHeaders = [("Content-Type", "application/json")]
+          , requestHeaders =
+              [ ("Content-Type", "application/json")
+              , ("Authorization", "Bearer " <> airseqWriteToken & P.encodeUtf8)
+              ]
           }
 
     sqlResponse <- httpLbs sqlRequest manager
@@ -199,7 +204,21 @@ uploadFiles domain dbId tableName paths = do
 
         fileRes <-
           flip httpLbs manager
-            =<< (fileRequest <&> (\req -> req{method = methodPut}))
+            =<< ( fileRequest
+                    <&> ( \req ->
+                            req
+                              { method = methodPut
+                              , requestHeaders =
+                                  requestHeaders req
+                                    <> [
+                                         ( "Authorization"
+                                         , "Bearer "
+                                            <> airseqWriteToken & P.encodeUtf8
+                                         )
+                                       ]
+                              }
+                        )
+                )
 
         if (fileRes.responseStatus.statusMessage /= "OK")
           || ("error" `BS.isInfixOf` (fileRes.responseBody & BSL.toStrict))

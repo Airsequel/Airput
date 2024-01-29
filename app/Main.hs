@@ -81,7 +81,7 @@ import Text.RawString.QQ (r)
 import Airsequel (saveReposInAirsequel)
 import FileUploader (uploadFiles)
 import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
-import Utils (loadGitHubToken)
+import Utils (loadAirsWriteToken, loadGitHubToken)
 
 
 data CliCmd
@@ -396,7 +396,13 @@ run :: CliCmd -> IO ()
 run cliCmd = do
   case cliCmd of
     FileUpload{domain, dbId, tableName, paths} -> do
-      uploadFiles (T.pack domain) (T.pack dbId) (T.pack tableName) paths
+      airsWriteToken <- loadAirsWriteToken
+      uploadFiles
+        (T.pack domain)
+        airsWriteToken
+        (T.pack dbId)
+        (T.pack tableName)
+        paths
     --
     GithubUpload repoSlug -> do
       ghTokenMb <- loadGitHubToken
