@@ -39,13 +39,13 @@ Available commands:
 
 ## TODOs
 
-- [ ] Add a column repo.exclusion_reason
-      If `!= NULL` repo should be excluded from further processing
-      E.g. for forks, mirrors, etc.
-- [ ] Add subcommand to load list of repos from Airsequel and update them
-- [ ] Add CLI flag to choose between `OverwriteRepo` and `AddRepo`
-- [ ] Store all languages for a repo
-- [ ] Store if account is a person or an organization
+- Add column `is_private` and only crawl private repos if `--private` is passed
+- Add subcommand to load list of repos from Airsequel and update them
+- Move `bin-calculation.py` to Airsequel
+- Store if account is a person or an organization
+- Store all languages for a repo
+- Repos created per week chart
+- Add CLI flag to choose between `OverwriteRepo` and `AddRepo`
 
 
 ## Related

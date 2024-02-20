@@ -32,13 +32,13 @@ import Protolude (
   (<&>),
   (<>),
   (==),
-  (>>=),
  )
 import Protolude qualified as P
 
 import Control.Arrow ((>>>))
 import Data.Aeson (
   Object,
+  Value (Object),
   eitherDecode,
   encode,
   object,
@@ -46,7 +46,7 @@ import Data.Aeson (
   (.=),
  )
 import Data.Aeson.KeyMap qualified as KeyMap
-import Data.Aeson.Types (parseEither)
+import Data.Aeson.Types (Parser, parseEither)
 import Data.Text qualified as T
 import Data.Time (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
@@ -68,6 +68,7 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types (statusCode)
 import Text.RawString.QQ (r)
 
+import Data.Aeson.Encode.Pretty (encodePretty)
 import Types (GqlRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadAirsWriteToken, loadDbEndpoint)
 
@@ -153,46 +154,69 @@ loadRowids manager dbEndpoint airseqWriteToken repos = do
     (getReposWithRowidResponse.responseStatus.statusCode /= 200)
     (putErrText $ show getReposWithRowidResponse.responseBody)
 
-  let
-    ghIdsWithRowid
-      :: Either [P.Char] [(Integer {- githubId -}, Integer {- rowid -})] =
-        (getReposWithRowidResponse.responseBody & eitherDecode)
-          >>= ( \gqlRes ->
-                  P.flip parseEither gqlRes $ \gqlResObj -> do
-                    gqlData <- gqlResObj .: "data"
-                    gqlData .: "repos"
-              )
-            <&> ( \(reposWithRowid :: [Repo]) ->
-                    reposWithRowid
-                      & filter (\repoWithRowid -> isJust repoWithRowid.rowid)
-                      <&> ( \repoWithRowid ->
-                              ( repoWithRowid.githubId
-                              , repoWithRowid.rowid & fromMaybe 0
-                              )
-                          )
-                )
+  -- Check for GraphQL errors
+  let gqlRes :: Either String GqlRes =
+        getReposWithRowidResponse.responseBody
+          & eitherDecode
 
-  case ghIdsWithRowid of
+  case gqlRes of
     Left err -> do
+      putErrText "Error parsing GraphQL response:"
       putErrLn err
       pure repos
-    Right rowids -> do
-      P.putText $
-        "\nℹ️ "
-          <> show @Int (P.length rowids)
-          <> " of "
-          <> show @Int (P.length repos)
-          <> " repos already exist in Airsequel"
+    Right GqlRes{gqlErrors, gqlData} ->
+      case gqlErrors of
+        Just errs -> do
+          putErrText "GraphQL errors:"
+          errs
+            <&> encodePretty
+            & P.mapM_ P.putLByteString
+          pure repos
+        Nothing -> do
+          let
+            repoParser :: Maybe Value -> Parser [Repo]
+            repoParser = \case
+              Just (Object obj) -> obj .: "repos"
+              _ -> P.mempty
 
-      pure $
-        repos <&> \repo ->
-          repo
-            { rowid =
-                rowids
-                  & filter (\(ghId, _) -> ghId == repo.githubId)
-                  & P.head
-                  <&> P.snd
-            }
+            -- \| … [(githubId, rowid)]
+            ghIdsWithRowid :: Either [P.Char] [(Integer, Integer)] =
+              gqlData
+                & parseEither repoParser
+                <&> ( \(reposWithRowid :: [Repo]) ->
+                        reposWithRowid
+                          & filter
+                            ( \repoWithRowid ->
+                                isJust repoWithRowid.rowid
+                            )
+                          <&> ( \repoWithRowid ->
+                                  ( repoWithRowid.githubId
+                                  , repoWithRowid.rowid & fromMaybe 0
+                                  )
+                              )
+                    )
+
+          case ghIdsWithRowid of
+            Left err -> do
+              putErrLn err
+              pure repos
+            Right rowids -> do
+              P.putText $
+                "\nℹ️ "
+                  <> show @Int (P.length rowids)
+                  <> " of "
+                  <> show @Int (P.length repos)
+                  <> " repos already exist in Airsequel"
+
+              pure $
+                repos <&> \repo ->
+                  repo
+                    { rowid =
+                        rowids
+                          & filter (\(ghId, _) -> ghId == repo.githubId)
+                          & P.head
+                          <&> P.snd
+                    }
 
 
 {-| Insert or upsert repos in Airsequel

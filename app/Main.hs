@@ -146,7 +146,9 @@ commands = do
           "github-upload"
           ( info
               githubUpload
-              (progDesc "Upload metadata for a single GitHub repo")
+              ( progDesc
+                  "Upload metadata for a single GitHub repo \"owner/name\""
+              )
           )
         <> command
           "github-search"
@@ -283,12 +285,17 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
               <> "⚠️ The search returns more than 1000 repos.\n"
               <> "⚠️ Not all repos will be crawled.\n"
 
-      let repos :: [Repo] = gqlResponse.repos
+      let
+        repos :: [Repo] = gqlResponse.repos
+        numRepos = P.length repos
+        pluralize word = if numRepos > 1 then word <> "s" else word
 
       putText $
         "\n✅ Received "
-          <> show @Int (P.length repos)
-          <> " repos from GitHub"
+          <> show @Int numRepos
+          <> " "
+          <> pluralize "repo"
+          <> " from GitHub"
 
       repos
         <&> ( \repo ->
