@@ -213,7 +213,8 @@ uploadFiles domain airseqWriteToken dbId tableName paths = do
                                     <> [
                                          ( "Authorization"
                                          , "Bearer "
-                                            <> airseqWriteToken & P.encodeUtf8
+                                            <> airseqWriteToken
+                                            & P.encodeUtf8
                                          )
                                        ]
                               }

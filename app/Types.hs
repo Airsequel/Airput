@@ -107,7 +107,8 @@ instance FromJSON Repo where
     commitsCount <- case defaultBranchRef of
       Nothing -> pure Nothing
       Just branchRef ->
-        branchRef .: "target"
+        branchRef
+          .: "target"
           >>= (.: "history")
           >>= (.: "totalCount")
 
