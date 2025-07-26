@@ -30,9 +30,12 @@ data Repo = Repo
   , homepageUrl :: Maybe Text
   , primaryLanguage :: Maybe Text
   , openIssuesCount :: Maybe Integer
+  , openPrsCount :: Maybe Integer
+  , isPrivate :: Maybe Bool
   , isArchived :: Maybe Bool
   , createdAt :: Maybe UTCTime
   , updatedAt :: Maybe UTCTime
+  , pushedAt :: Maybe UTCTime
   , commitsCount :: Maybe Integer
   }
   deriving (Show, Eq, Generic)
@@ -50,9 +53,12 @@ emptyRepo =
     , homepageUrl = Nothing
     , primaryLanguage = Nothing
     , openIssuesCount = Nothing
+    , openPrsCount = Nothing
+    , isPrivate = Nothing
     , isArchived = Nothing
     , createdAt = Nothing
     , updatedAt = Nothing
+    , pushedAt = Nothing
     , commitsCount = Nothing
     }
 
@@ -86,9 +92,16 @@ instance FromJSON Repo where
       Nothing -> pure Nothing
       Just issuesObj -> issuesObj .: "totalCount"
 
+    openPrsCountMb <- o .:? "pullRequests"
+    openPrsCount <- case openPrsCountMb of
+      Nothing -> pure Nothing
+      Just prsObj -> prsObj .: "totalCount"
+
+    isPrivate <- o .:? "isPrivate"
     isArchived <- o .:? "isArchived"
     createdAt <- o .:? "createdAt"
     updatedAt <- o .:? "updatedAt"
+    pushedAt <- o .:? "pushedAt"
 
     defaultBranchRef <- o .:? "defaultBranchRef"
     commitsCount <- case defaultBranchRef of
@@ -159,5 +172,5 @@ instance FromJSON GqlRepoRes where
             }
 
 
-data SaveStrategy = OverwriteRepo | AddRepo
+data SaveStrategy = OverwriteRepo {tableName :: Text} | AddRepo {tableName :: Text}
   deriving (Show, Eq)

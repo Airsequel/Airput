@@ -69,6 +69,7 @@ import Network.HTTP.Types (statusCode)
 import Text.RawString.QQ (r)
 
 import Data.Aeson.Encode.Pretty (encodePretty)
+import Data.Aeson.Key (fromText)
 import Types (GqlRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadAirsWriteToken, loadDbEndpoint)
 
@@ -92,11 +93,11 @@ setRequestFields airseqWriteToken query variables req =
 
 
 -- | Insert repos in Airsequel or update them if rowid is already assigned
-upsertRepoQuery :: Text
-upsertRepoQuery = do
+upsertRepoQuery :: Text -> Text
+upsertRepoQuery tableName =
   [r|
-    mutation InsertRepo( $objects: [repos_insert_input!]! ) {
-      insert_repos(
+    mutation InsertRepo( $objects: [TABLE_NAME_insert_input!]! ) {
+      insert_TABLE_NAME(
         objects: $objects
         on_conflict: {
           constraint: rowid
@@ -106,9 +107,12 @@ upsertRepoQuery = do
             language
             stargazers_count
             open_issues_count
+            open_prs_count
             commits_count
+            is_private
             is_archived
             updated_utc
+            pushed_utc
             crawled_utc
           ]
         }
@@ -122,22 +126,25 @@ upsertRepoQuery = do
       }
     }
   |]
+    & T.replace "TABLE_NAME" tableName
 
 
 -- | Load Airsequel rowid of repos by their GitHub ID
-loadRowids :: Manager -> Text -> Text -> [Repo] -> IO [Repo]
-loadRowids manager dbEndpoint airseqWriteToken repos = do
+loadRowids :: Manager -> Text -> Text -> Text -> [Repo] -> IO [Repo]
+loadRowids manager dbEndpoint airseqWriteToken tableName repos = do
+  -- Build the query with dynamic table name
   let
     getReposWithRowidQuery :: Text
     getReposWithRowidQuery =
       [r|
         query GetRowids ($githubIds: [Int]) {
-          repos(filter: { github_id: { in: $githubIds } }) {
+          TABLE_NAME(filter: { github_id: { in: $githubIds } }) {
             databaseId: github_id
             rowid
           }
         }
       |]
+        & T.replace "TABLE_NAME" tableName
 
   initialGetRowidsRequest <- parseRequest $ T.unpack dbEndpoint
 
@@ -176,7 +183,7 @@ loadRowids manager dbEndpoint airseqWriteToken repos = do
           let
             repoParser :: Maybe Value -> Parser [Repo]
             repoParser = \case
-              Just (Object obj) -> obj .: "repos"
+              Just (Object obj) -> obj .: fromText tableName
               _ -> P.mempty
 
             -- \| … [(githubId, rowid)]
@@ -234,10 +241,14 @@ saveReposInAirsequel saveStrategy repos = do
 
   now <- getCurrentTime <&> (iso8601Show >>> T.pack)
 
+  let tableName = case saveStrategy of
+        OverwriteRepo tn -> tn
+        AddRepo tn -> tn
+
   -- Get rowid for repos if repos shall be overwritten
   reposNorm <- case saveStrategy of
-    OverwriteRepo -> loadRowids manager dbEndpoint airseqWriteToken repos
-    AddRepo -> pure repos
+    OverwriteRepo tn -> loadRowids manager dbEndpoint airseqWriteToken tn repos
+    AddRepo _ -> pure repos
 
   initialInsertRequest <- parseRequest $ T.unpack dbEndpoint
 
@@ -254,17 +265,20 @@ saveReposInAirsequel saveStrategy repos = do
           , "language" .= repo.primaryLanguage
           , "stargazers_count" .= repo.stargazerCount
           , "open_issues_count" .= repo.openIssuesCount
+          , "open_prs_count" .= repo.openPrsCount
           , "commits_count" .= (repo.commitsCount & fromMaybe 0)
+          , "is_private" .= repo.isPrivate
           , "is_archived" .= repo.isArchived
           , "created_utc" .= (repo.createdAt <&> iso8601Show)
           , "updated_utc" .= (repo.updatedAt <&> iso8601Show)
+          , "pushed_utc" .= (repo.pushedAt <&> iso8601Show)
           , "crawled_utc" .= now
           ]
 
     insertRequest =
       setRequestFields
         airseqWriteToken
-        upsertRepoQuery
+        (upsertRepoQuery tableName)
         (KeyMap.fromList ["objects" .= objects])
         initialInsertRequest
 
@@ -291,14 +305,14 @@ saveReposInAirsequel saveStrategy repos = do
 
 
 -- | Delete the repo from Airsequel
-deleteRepo :: Manager -> Text -> Text -> Repo -> IO ()
-deleteRepo manager dbEndpoint airseqWriteToken repo = do
+deleteRepo :: Manager -> Text -> Text -> Repo -> Text -> IO ()
+deleteRepo manager dbEndpoint airseqWriteToken repo tableName = do
   let
     deleteRepoQuery :: Text
     deleteRepoQuery =
       [r|
         mutation DeleteRepo($github_id: Int!) {
-          delete_repos(
+          delete_TABLE_NAME(
             filter: {
               github_id: { eq: $github_id }
             }
@@ -312,6 +326,7 @@ deleteRepo manager dbEndpoint airseqWriteToken repo = do
           }
         }
       |]
+        & T.replace "TABLE_NAME" tableName
 
   initialDeleteRequest <- parseRequest $ T.unpack dbEndpoint
 

@@ -89,13 +89,19 @@ data CliCmd
     FileUpload
       { domain :: [P.Char]
       , dbId :: [P.Char]
-      , tableName :: [P.Char]
+      , tableName :: Text
       , paths :: [P.FilePath]
       }
   | -- | Upload metadata for a single GitHub repo
-    GithubUpload Text
+    GithubUpload
+      { repoSlug :: Text
+      , tableName :: Text
+      }
   | -- | Search for GitHub repos and upload their metadata
-    GithubSearch [Text]
+    GithubSearch
+      { searchQueries :: [Text]
+      , tableName :: Text
+      }
 
 
 commands :: Parser CliCmd
@@ -116,20 +122,38 @@ commands = do
               <> metavar "DATABASE_ID"
               <> help "Database ID to upload files to"
           )
-        <*> strOption
-          ( long "tablename"
-              <> metavar "TABLE_NAME"
-              <> help "Table name to upload files to"
-          )
+        <*> ( T.pack
+                <$> strOption
+                  ( long "tablename"
+                      <> metavar "TABLE_NAME"
+                      <> help "Table name to upload files to"
+                  )
+            )
         <*> some (argument str (metavar "FILE/DIR..."))
 
     githubUpload :: Parser CliCmd
     githubUpload =
-      GithubUpload <$> argument str (metavar "REPO_SLUG")
+      GithubUpload
+        <$> argument str (metavar "REPO_SLUG")
+        <*> strOption
+          ( long "tablename"
+              <> metavar "TABLE_NAME"
+              <> help "Table name to upload repos to"
+              <> showDefault
+              <> value "repos"
+          )
 
     githubSearch :: Parser CliCmd
     githubSearch =
-      GithubSearch <$> many (argument str (metavar "SEARCH_QUERY"))
+      GithubSearch
+        <$> many (argument str (metavar "SEARCH_QUERY"))
+        <*> strOption
+          ( long "tablename"
+              <> metavar "TABLE_NAME"
+              <> help "Table name to upload repos to"
+              <> showDefault
+              <> value "repos"
+          )
 
   hsubparser
     ( mempty
@@ -181,7 +205,7 @@ commands = do
 | and saves it to Airsequel
 -}
 loadAndSaveRepo :: Maybe Text -> SaveStrategy -> Text -> Text -> IO [Repo]
-loadAndSaveRepo ghTokenMb _TODO_saveStrategy owner name = do
+loadAndSaveRepo ghTokenMb saveStrategy owner name = do
   let gqlQUery =
         [r|
           query GetSingleRepo($owner: String!, $name: String!) {
@@ -197,12 +221,17 @@ loadAndSaveRepo ghTokenMb _TODO_saveStrategy owner name = do
               primaryLanguage {
                 name
               }
-              issues(states: [OPEN]) {
+              issues(states: OPEN) {
                 totalCount
               }
+              pullRequests(states: OPEN) {
+                totalCount
+              }
+              isPrivate
               isArchived
               createdAt
               updatedAt
+              pushedAt
               defaultBranchRef {
                 target {
                   ... on Commit {
@@ -216,6 +245,10 @@ loadAndSaveRepo ghTokenMb _TODO_saveStrategy owner name = do
           }
         |]
 
+  let tn = case saveStrategy of
+        OverwriteRepo t -> t
+        AddRepo t -> t
+
   execGithubGqlQuery
     ghTokenMb
     gqlQUery
@@ -225,6 +258,7 @@ loadAndSaveRepo ghTokenMb _TODO_saveStrategy owner name = do
         ]
     )
     []
+    tn
 
 
 getGhHeaders :: (P.IsString a) => Maybe Text -> [(a, P.ByteString)]
@@ -239,8 +273,9 @@ getGhHeaders tokenMb =
       Nothing -> []
 
 
-execGithubGqlQuery :: Maybe Text -> Text -> KeyMap Value -> [Repo] -> IO [Repo]
-execGithubGqlQuery ghTokenMb query variables initialRepos = do
+execGithubGqlQuery ::
+  Maybe Text -> Text -> KeyMap Value -> [Repo] -> Text -> IO [Repo]
+execGithubGqlQuery ghTokenMb query variables initialRepos tableName = do
   putText "\n▶️ Query a batch of repos from GitHub …"
 
   manager <- newManager tlsManagerSettings
@@ -314,7 +349,7 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
         & mapM_ putText
 
       when (P.not $ P.null repos) $ do
-        saveReposInAirsequel OverwriteRepo repos
+        saveReposInAirsequel (OverwriteRepo tableName) repos
 
       case gqlResponse.nextCursorMb of
         Nothing -> pure $ initialRepos <> repos
@@ -324,15 +359,17 @@ execGithubGqlQuery ghTokenMb query variables initialRepos = do
             query
             (variables & KeyMap.insert "after" (String nextCursor))
             (initialRepos <> repos)
+            tableName
 
 
-loadAndSaveReposViaSearch
-  :: Maybe Text
-  -> Text
-  -> Int
-  -> Maybe Text
-  -> IO [Repo]
-loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
+loadAndSaveReposViaSearch ::
+  Maybe Text ->
+  Text ->
+  Int ->
+  Maybe Text ->
+  Text ->
+  IO [Repo]
+loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb tableNameParam = do
   let gqlQUery =
         [r|
           query SearchRepos(
@@ -361,12 +398,17 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
                     #   totalCount
                     #   nodes { name }
                     # }
-                    issues (states: [OPEN]) {
+                    issues (states: OPEN) {
                       totalCount
                     }
+                    pullRequests (states: OPEN) {
+                      totalCount
+                    }
+                    isPrivate
                     isArchived
                     createdAt
                     updatedAt
+                    pushedAt
                     defaultBranchRef {
                       target {
                         ... on Commit {
@@ -396,6 +438,7 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb = do
         ]
     )
     []
+    tableNameParam
 
 
 -- | Function to handle the execution of commands
@@ -408,10 +451,10 @@ run cliCmd = do
         (T.pack domain)
         airsWriteToken
         (T.pack dbId)
-        (T.pack tableName)
+        tableName
         paths
     --
-    GithubUpload repoSlug -> do
+    GithubUpload{repoSlug, tableName = cmdTableName} -> do
       ghTokenMb <- loadGitHubToken
       let
         fragments = repoSlug & T.splitOn "/"
@@ -427,17 +470,18 @@ run cliCmd = do
               _ <-
                 loadAndSaveRepo
                   ghTokenMb
-                  OverwriteRepo
+                  (OverwriteRepo cmdTableName)
                   owner
                   name
               pure ()
     --
-    GithubSearch searchQueries -> do
+    GithubSearch{searchQueries, tableName = cmdTableName} -> do
       ghTokenMb <- loadGitHubToken
       let searchQueriesNorm = searchQueries <&> (T.replace "\n" " " >>> T.strip)
 
       allRepos <- P.forM searchQueriesNorm $ \searchQueryNorm -> do
-        repos <- loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 50 Nothing
+        repos <-
+          loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 50 Nothing cmdTableName
 
         putText $
           "\n🏁 Crawled "
