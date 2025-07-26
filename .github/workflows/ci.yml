@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Stack
         uses: haskell-actions/setup@v2
@@ -18,7 +18,7 @@ jobs:
           stack-no-global: true
 
       - name: Cache Stack build files
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.stack
