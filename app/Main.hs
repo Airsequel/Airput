@@ -84,6 +84,10 @@ import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
 import Utils (loadAirsWriteToken, loadGitHubToken)
 
 
+batchSize :: Int
+batchSize = 50
+
+
 data CliCmd
   = -- | Upload files
     FileUpload
@@ -276,8 +280,6 @@ getGhHeaders tokenMb =
 execGithubGqlQuery ::
   Maybe Text -> Text -> KeyMap Value -> [Repo] -> Text -> IO [Repo]
 execGithubGqlQuery ghTokenMb query variables initialRepos tableName = do
-  putText "\n▶️ Query a batch of repos from GitHub …"
-
   manager <- newManager tlsManagerSettings
 
   initialRequest <- parseRequest $ T.unpack "https://api.github.com/graphql"
@@ -311,14 +313,19 @@ execGithubGqlQuery ghTokenMb query variables initialRepos tableName = do
 
       when (P.null initialRepos {- First call -}) $ do
         putText $
-          "\n📲 Total number of repos: "
+          "#️⃣  Number of repos: "
             <> show @Integer gqlResponse.repositoryCount
 
-        when (gqlResponse.repositoryCount > 1000) $ do
-          putText $
-            "\n⚠️ WARNING\n"
-              <> "⚠️ The search returns more than 1000 repos.\n"
-              <> "⚠️ Not all repos will be crawled.\n"
+      when (gqlResponse.repositoryCount > 1000) $ do
+        putText $
+          "\n⚠️ WARNING\n"
+            <> "⚠️ The search returns more than 1000 repos.\n"
+            <> "⚠️ Not all repos will be crawled.\n"
+
+      putText $
+        "\n▶️ Query a batch of "
+          <> show @Int batchSize
+          <> " repos from GitHub …"
 
       let
         repos :: [Repo] = gqlResponse.repos
@@ -428,6 +435,8 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb tableNameParam 
           }
         |]
 
+  putText $ "\n🔎 Search Query: " <> searchQuery <> "\n"
+
   execGithubGqlQuery
     ghTokenMb
     gqlQUery
@@ -481,14 +490,17 @@ run cliCmd = do
 
       allRepos <- P.forM searchQueriesNorm $ \searchQueryNorm -> do
         repos <-
-          loadAndSaveReposViaSearch ghTokenMb searchQueryNorm 50 Nothing cmdTableName
+          loadAndSaveReposViaSearch
+            ghTokenMb
+            searchQueryNorm
+            batchSize
+            Nothing
+            cmdTableName
 
         putText $
           "\n🏁 Crawled "
             <> show @Int (P.length repos)
-            <> " repos with search query:\n"
-            <> searchQueryNorm
-            <> "\n"
+            <> " repos\n\n"
 
         pure repos
 

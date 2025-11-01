@@ -174,7 +174,7 @@ loadRowids manager dbEndpoint airseqWriteToken tableName repos = do
     Right GqlRes{gqlErrors, gqlData} ->
       case gqlErrors of
         Just errs -> do
-          putErrText "GraphQL errors:"
+          putErrText "GraphQL errors while retrieving repos:"
           errs
             <&> encodePretty
             & P.mapM_ P.putLByteString
@@ -300,7 +300,7 @@ saveReposInAirsequel saveStrategy repos = do
       case gqlErrors of
         Nothing -> pure ()
         Just errs -> do
-          putErrText "GraphQL errors:"
+          putErrText "GraphQL errors while upserting repos:"
           putErrText $ show errs
 
 

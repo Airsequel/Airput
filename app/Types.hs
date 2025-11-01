@@ -20,6 +20,30 @@ import Data.Aeson.Types (parseJSON)
 import Data.Time (UTCTime)
 
 
+{-| Corresponding SQL table:
+
+`rowid` is created automatically.
+
+CREATE TABLE "repos" (
+  "name"               TEXT,
+  "commits_count"      INTEGER DEFAULT 0 NOT NULL,
+  "stargazers_count"   INTEGER DEFAULT 0 NOT NULL,
+  "github_id"          INTEGER DEFAULT 0 NOT NULL,
+  "owner"              TEXT DEFAULT '' NOT NULL,
+  "description"        TEXT,
+  "homepage"           TEXT_URL,
+  "languages"          TEXT_JSON_ARRAY,
+  "language"           TEXT,
+  "open_issues_count"  INTEGER,
+  "is_archived"        BOOLEAN DEFAULT FALSE NOT NULL,
+  "updated_utc"        TEXT_DATETIME,
+  "crawled_utc"        TEXT_DATETIME,
+  "created_utc"        TEXT_DATETIME,
+  "pushed_utc"         TEXT_DATETIME,
+  "is_private"         BOOLEAN DEFAULT FALSE NOT NULL,
+  "open_prs_count"     INTEGER
+)
+-}
 data Repo = Repo
   { githubId :: Integer
   , rowid :: Maybe Integer -- Airsequel rowid
