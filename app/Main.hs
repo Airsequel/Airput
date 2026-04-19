@@ -349,8 +349,8 @@ execGithubGqlQuery ghTokenMb query variables initialRepos tableName = do
                   <> show @Integer (repo.stargazerCount & fromMaybe 0)
                   <> (" | commits: " :: Text)
                   <> ( repo.commitsCount
-                        <&> show @Integer
-                        & fromMaybe "ERROR: Should have a commits count"
+                         <&> show @Integer
+                         & fromMaybe "ERROR: Should have a commits count"
                      )
             )
         & mapM_ putText

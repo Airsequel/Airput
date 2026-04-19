@@ -91,20 +91,20 @@ getFilesSorted path = do
   filePaths <- listDirectory path
   filePaths
     & filterM (doesFileExist . (path </>))
-    <&> ( P.filter (/= ".DS_Store")
-            >>> P.sort
-            >>> P.map (path </>)
-        )
+      <&> ( P.filter (/= ".DS_Store")
+              >>> P.sort
+              >>> P.map (path </>)
+          )
 
 
 createSQLQuery :: Text -> FileData -> Text
 createSQLQuery tableName fileData =
   ("INSERT INTO " <> quoteKeyword tableName <> " (name, filetype) ")
     <> ( "VALUES ("
-          <> quoteText (T.pack $ takeBaseName fileData.name)
-          <> ", "
-          <> quoteText fileData.filetype
-          <> ") "
+           <> quoteText (T.pack $ takeBaseName fileData.name)
+           <> ", "
+           <> quoteText fileData.filetype
+           <> ") "
        )
     <> "RETURNING rowid"
 
@@ -150,7 +150,7 @@ uploadFiles domain airseqWriteToken dbId tableName paths = do
 
     if (sqlResponse.responseStatus.statusMessage /= "OK")
       || ( ("error" `BS.isInfixOf` resBody)
-            P.&& P.not ("errors\":[]" `BS.isInfixOf` resBody)
+             P.&& P.not ("errors\":[]" `BS.isInfixOf` resBody)
          )
       then
         putErrLn $
@@ -213,8 +213,8 @@ uploadFiles domain airseqWriteToken dbId tableName paths = do
                                     <> [
                                          ( "Authorization"
                                          , "Bearer "
-                                            <> airseqWriteToken
-                                            & P.encodeUtf8
+                                             <> airseqWriteToken
+                                             & P.encodeUtf8
                                          )
                                        ]
                               }

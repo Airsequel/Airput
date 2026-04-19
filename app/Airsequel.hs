@@ -190,18 +190,18 @@ loadRowids manager dbEndpoint airseqWriteToken tableName repos = do
             ghIdsWithRowid :: Either [P.Char] [(Integer, Integer)] =
               gqlData
                 & parseEither repoParser
-                <&> ( \(reposWithRowid :: [Repo]) ->
-                        reposWithRowid
-                          & filter
-                            ( \repoWithRowid ->
-                                isJust repoWithRowid.rowid
-                            )
-                          <&> ( \repoWithRowid ->
-                                  ( repoWithRowid.githubId
-                                  , repoWithRowid.rowid & fromMaybe 0
-                                  )
+                  <&> ( \(reposWithRowid :: [Repo]) ->
+                          reposWithRowid
+                            & filter
+                              ( \repoWithRowid ->
+                                  isJust repoWithRowid.rowid
                               )
-                    )
+                              <&> ( \repoWithRowid ->
+                                      ( repoWithRowid.githubId
+                                      , repoWithRowid.rowid & fromMaybe 0
+                                      )
+                                  )
+                      )
 
           case ghIdsWithRowid of
             Left err -> do
@@ -222,7 +222,7 @@ loadRowids manager dbEndpoint airseqWriteToken tableName repos = do
                         rowids
                           & filter (\(ghId, _) -> ghId == repo.githubId)
                           & P.head
-                          <&> P.snd
+                            <&> P.snd
                     }
 
 
