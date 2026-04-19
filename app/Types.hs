@@ -41,7 +41,8 @@ CREATE TABLE "repos" (
   "created_utc"        TEXT_DATETIME,
   "pushed_utc"         TEXT_DATETIME,
   "is_private"         BOOLEAN DEFAULT FALSE NOT NULL,
-  "open_prs_count"     INTEGER
+  "open_prs_count"     INTEGER,
+  "latest_tag_utc"     TEXT_DATETIME
 )
 -}
 data Repo = Repo
@@ -60,6 +61,7 @@ data Repo = Repo
   , createdAt :: Maybe UTCTime
   , updatedAt :: Maybe UTCTime
   , pushedAt :: Maybe UTCTime
+  , latestTagAt :: Maybe UTCTime
   , commitsCount :: Maybe Integer
   }
   deriving (Show, Eq, Generic)
@@ -83,6 +85,7 @@ emptyRepo =
     , createdAt = Nothing
     , updatedAt = Nothing
     , pushedAt = Nothing
+    , latestTagAt = Nothing
     , commitsCount = Nothing
     }
 
@@ -135,6 +138,24 @@ instance FromJSON Repo where
           .: "target"
           >>= (.: "history")
           >>= (.: "totalCount")
+
+    refsMb <- o .:? "refs"
+    latestTagAt <- case refsMb of
+      Nothing -> pure Nothing
+      Just refs -> do
+        nodes <- refs .: "nodes"
+        case nodes of
+          [] -> pure Nothing
+          (node : _) -> do
+            target <- node .: "target"
+            directMb <- target .:? "committedDate"
+            case directMb of
+              Just d -> pure (Just d)
+              Nothing -> do
+                nestedMb <- target .:? "target"
+                case nestedMb of
+                  Nothing -> pure Nothing
+                  Just nested -> nested .:? "committedDate"
 
     pure Repo{..}
 

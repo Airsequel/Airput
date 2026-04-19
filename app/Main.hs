@@ -245,6 +245,22 @@ loadAndSaveRepo ghTokenMb saveStrategy owner name = do
                   }
                 }
               }
+              refs(
+                refPrefix: "refs/tags/"
+                orderBy: {field: TAG_COMMIT_DATE, direction: DESC}
+                first: 1
+              ) {
+                nodes {
+                  target {
+                    ... on Commit { committedDate }
+                    ... on Tag {
+                      target {
+                        ... on Commit { committedDate }
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         |]
@@ -421,6 +437,22 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb tableNameParam 
                         ... on Commit {
                           history {
                             totalCount
+                          }
+                        }
+                      }
+                    }
+                    refs(
+                      refPrefix: "refs/tags/"
+                      orderBy: {field: TAG_COMMIT_DATE, direction: DESC}
+                      first: 1
+                    ) {
+                      nodes {
+                        target {
+                          ... on Commit { committedDate }
+                          ... on Tag {
+                            target {
+                              ... on Commit { committedDate }
+                            }
                           }
                         }
                       }

@@ -113,6 +113,7 @@ upsertRepoQuery tableName =
             is_archived
             updated_utc
             pushed_utc
+            latest_tag_utc
             crawled_utc
           ]
         }
@@ -272,6 +273,7 @@ saveReposInAirsequel saveStrategy repos = do
           , "created_utc" .= (repo.createdAt <&> iso8601Show)
           , "updated_utc" .= (repo.updatedAt <&> iso8601Show)
           , "pushed_utc" .= (repo.pushedAt <&> iso8601Show)
+          , "latest_tag_utc" .= (repo.latestTagAt <&> iso8601Show)
           , "crawled_utc" .= now
           ]
 
