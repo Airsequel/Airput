@@ -20,6 +20,7 @@ import Protolude (
   many,
   mapM_,
   mempty,
+  otherwise,
   pure,
   putErrText,
   putText,
@@ -27,23 +28,34 @@ import Protolude (
   when,
   ($),
   (&),
+  (*),
+  (+),
   (<$>),
   (<&>),
   (<*>),
   (<>),
+  (==),
   (>),
+  (>=),
   (>>=),
+  (^),
+  (||),
  )
 import Protolude qualified as P
 
 import Control.Arrow ((>>>))
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, try)
 import Data.Aeson (Value (String), eitherDecode, encode, object, (.=))
 import Data.Aeson.KeyMap (KeyMap)
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Lazy (ByteString)
 import Data.Text qualified as T
-import GHC.Base (String)
 import Network.HTTP.Client (
+  Manager,
+  Request,
   RequestBody (RequestBodyLBS),
+  Response,
   httpLbs,
   method,
   newManager,
@@ -51,8 +63,10 @@ import Network.HTTP.Client (
   requestBody,
   requestHeaders,
   responseBody,
+  responseStatus,
  )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types (statusCode)
 import Options.Applicative (
   Parser,
   argument,
@@ -293,6 +307,51 @@ getGhHeaders tokenMb =
       Nothing -> []
 
 
+{-| Execute a GitHub GraphQL request, retrying on transient failures:
+network exceptions, HTTP 5xx / 429, and non-JSON response bodies
+(upstream proxies sometimes return HTML 502 pages with a 200 status).
+-}
+executeWithRetries :: Manager -> Request -> IO (Either Text GqlRepoRes)
+executeWithRetries manager request = go 1
+  where
+    maxAttempts :: Int
+    maxAttempts = 5
+
+    go :: Int -> IO (Either Text GqlRepoRes)
+    go attempt = do
+      resultE :: Either SomeException (Response ByteString) <-
+        try (httpLbs request manager)
+      case resultE of
+        Left ex ->
+          retryOr attempt $ "network exception: " <> T.pack (show ex)
+        Right response -> do
+          let code = response.responseStatus.statusCode
+          if code >= 500 || code == 429
+            then retryOr attempt $ "HTTP " <> show code
+            else case eitherDecode response.responseBody of
+              Left decodeErr ->
+                retryOr attempt $ "JSON decode error: " <> T.pack decodeErr
+              Right parsed -> pure $ Right parsed
+
+    retryOr :: Int -> Text -> IO (Either Text GqlRepoRes)
+    retryOr attempt reason
+      | attempt >= maxAttempts = pure $ Left reason
+      | otherwise = do
+          let delaySeconds = (2 :: Int) ^ attempt
+          putErrText $
+            "⚠️  "
+              <> reason
+              <> " (attempt "
+              <> show attempt
+              <> "/"
+              <> show maxAttempts
+              <> "), retrying in "
+              <> show delaySeconds
+              <> "s…"
+          threadDelay $ delaySeconds * 1_000_000
+          go $ attempt + 1
+
+
 execGithubGqlQuery ::
   Maybe Text -> Text -> KeyMap Value -> [Repo] -> Text -> IO [Repo]
 execGithubGqlQuery ghTokenMb query variables initialRepos tableName = do
@@ -313,15 +372,17 @@ execGithubGqlQuery ghTokenMb query variables initialRepos tableName = do
                     ]
           }
 
-  response <- httpLbs request manager
-
-  let gqlResult :: Either String GqlRepoRes =
-        response.responseBody & eitherDecode
+  gqlResult <- executeWithRetries manager request
 
   case gqlResult of
-    Left error -> do
-      putErrText $ "HTTP Error: " <> show error
-      pure []
+    Left reason -> do
+      putErrText $
+        "❌ GitHub request failed after retries: "
+          <> reason
+          <> "\n   Preserving "
+          <> show @Int (P.length initialRepos)
+          <> " repos crawled so far."
+      pure initialRepos
     Right gqlResponse -> do
       case gqlResponse.errorsMb of
         Just errors -> putErrText $ "GraphQL Errors:\n" <> show errors
