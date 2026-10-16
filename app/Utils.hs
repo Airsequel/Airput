@@ -1,4 +1,5 @@
 module Utils (
+  getGhHeaders,
   loadAirsWriteToken,
   loadDbEndpoint,
   loadDbId,
@@ -7,12 +8,16 @@ module Utils (
 where
 
 import Protolude (
+  ByteString,
   IO,
+  IsString,
   Maybe (..),
   Text,
+  encodeUtf8,
   pure,
   putErrText,
   ($),
+  (&),
   (<>),
  )
 
@@ -62,3 +67,16 @@ loadGitHubToken = do
       pure Nothing
     Just token ->
       pure $ Just $ T.pack token
+
+
+-- | Headers for requests to the GitHub REST and GraphQL APIs
+getGhHeaders :: (IsString a) => Maybe Text -> [(a, ByteString)]
+getGhHeaders tokenMb =
+  [ ("User-Agent", "airput")
+  , ("Accept", "application/vnd.github+json")
+  , ("X-GitHub-Api-Version", "2026-03-10")
+  ]
+    <> case tokenMb of
+      Just token ->
+        [("Authorization", "Bearer " <> token & encodeUtf8)]
+      Nothing -> []

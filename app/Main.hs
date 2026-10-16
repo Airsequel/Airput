@@ -13,7 +13,6 @@ import Protolude (
   Integer,
   Maybe (..),
   Text,
-  encodeUtf8,
   fromMaybe,
   headMay,
   lastMay,
@@ -80,6 +79,7 @@ import Options.Applicative (
   info,
   long,
   metavar,
+  optional,
   progDesc,
   progDescDoc,
   showDefault,
@@ -94,8 +94,9 @@ import Text.RawString.QQ (r)
 
 import Airsequel (saveReposInAirsequel)
 import FileUploader (uploadFiles)
+import StarHistory (loadAndSaveStarHistories)
 import Types (GqlRepoRes (..), Repo (..), SaveStrategy (..))
-import Utils (loadAirsWriteToken, loadGitHubToken)
+import Utils (getGhHeaders, loadAirsWriteToken, loadGitHubToken)
 
 
 batchSize :: Int
@@ -114,11 +115,13 @@ data CliCmd
     GithubUpload
       { repoSlug :: Text
       , tableName :: Text
+      , starHistoryTableMb :: Maybe Text
       }
   | -- | Search for GitHub repos and upload their metadata
     GithubSearch
       { searchQueries :: [Text]
       , tableName :: Text
+      , starHistoryTableMb :: Maybe Text
       }
 
 
@@ -149,6 +152,19 @@ commands = do
             )
         <*> some (argument str (metavar "FILE/DIR..."))
 
+    starHistoryTable :: Parser (Maybe Text)
+    starHistoryTable =
+      optional $
+        strOption
+          ( long "star-history"
+              <> metavar "TABLE_NAME"
+              <> help
+                "Also load the weekly star history of each repo \
+                \and save it to this table. \
+                \The first crawl needs one request per 30 weeks of repo age, \
+                \later crawls only load the new weeks."
+          )
+
     githubUpload :: Parser CliCmd
     githubUpload =
       GithubUpload
@@ -160,6 +176,7 @@ commands = do
               <> showDefault
               <> value "repos"
           )
+        <*> starHistoryTable
 
     githubSearch :: Parser CliCmd
     githubSearch =
@@ -172,6 +189,7 @@ commands = do
               <> showDefault
               <> value "repos"
           )
+        <*> starHistoryTable
 
   hsubparser
     ( mempty
@@ -293,18 +311,6 @@ loadAndSaveRepo ghTokenMb saveStrategy owner name = do
     )
     []
     tn
-
-
-getGhHeaders :: (P.IsString a) => Maybe Text -> [(a, P.ByteString)]
-getGhHeaders tokenMb =
-  [ ("User-Agent", "airput")
-  , ("Accept", "application/vnd.github+json")
-  , ("X-GitHub-Api-Version", "2022-11-28")
-  ]
-    <> case tokenMb of
-      Just token ->
-        [("Authorization", "Bearer " <> token & encodeUtf8)]
-      Nothing -> []
 
 
 {-| Execute a GitHub GraphQL request, retrying on transient failures:
@@ -543,6 +549,16 @@ loadAndSaveReposViaSearch ghTokenMb searchQuery numRepos afterMb tableNameParam 
     tableNameParam
 
 
+-- | Load and save the star histories of repos if a table was specified
+saveStarHistories :: Maybe Text -> Maybe Text -> [Repo] -> IO ()
+saveStarHistories ghTokenMb starHistoryTableMb repos =
+  case starHistoryTableMb of
+    Nothing -> pure ()
+    Just starHistoryTable -> do
+      putText "\n⏳ Loading star histories …"
+      loadAndSaveStarHistories ghTokenMb starHistoryTable repos
+
+
 -- | Function to handle the execution of commands
 run :: CliCmd -> IO ()
 run cliCmd = do
@@ -556,7 +572,7 @@ run cliCmd = do
         tableName
         paths
     --
-    GithubUpload{repoSlug, tableName = cmdTableName} -> do
+    GithubUpload{repoSlug, tableName = cmdTableName, starHistoryTableMb} -> do
       ghTokenMb <- loadGitHubToken
       let
         fragments = repoSlug & T.splitOn "/"
@@ -569,15 +585,15 @@ run cliCmd = do
           case nameMb of
             Nothing -> putErrText "Error: Repo name is missing"
             Just name -> do
-              _ <-
+              repos <-
                 loadAndSaveRepo
                   ghTokenMb
                   (OverwriteRepo cmdTableName)
                   owner
                   name
-              pure ()
+              saveStarHistories ghTokenMb starHistoryTableMb repos
     --
-    GithubSearch{searchQueries, tableName = cmdTableName} -> do
+    GithubSearch{searchQueries, tableName = cmdTableName, starHistoryTableMb} -> do
       ghTokenMb <- loadGitHubToken
       let searchQueriesNorm = searchQueries <&> (T.replace "\n" " " >>> T.strip)
 
@@ -594,6 +610,8 @@ run cliCmd = do
           "\n🏁 Crawled "
             <> show @Int (P.length repos)
             <> " repos\n\n"
+
+        saveStarHistories ghTokenMb starHistoryTableMb repos
 
         pure repos
 

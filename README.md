@@ -37,6 +37,39 @@ Available commands:
 ```
 
 
+### Star History
+
+`github-upload` and `github-search` accept `--star-history TABLE_NAME`
+to also load the weekly star history of each repo
+via GitHub's [star history endpoint].
+The first crawl of a repo needs one request per 30 weeks of repo age.
+Later crawls only load the weeks since the newest stored week
+(usually a single request).
+As unstarring removes a star from the week it was added,
+the complete history is reloaded
+if the sum of all weeks doesn't match the star count.
+Requests are paced to stay within the rate limit,
+so large crawls take a while
+(about 0.7 s per request with a `GITHUB_TOKEN`, about 60 s without).
+
+Weeks without any stars are not stored,
+except for the newest one, which marks how far the history is complete.
+
+The table must exist beforehand:
+
+```sql
+CREATE TABLE "star_history" (
+  "github_id"  INTEGER NOT NULL,
+  "week_utc"   TEXT_DATETIME NOT NULL,
+  "stars"      INTEGER NOT NULL,
+  "days"       TEXT_JSON_ARRAY
+)
+```
+
+[star history endpoint]:
+  https://docs.github.com/en/rest/activity/starring#get-repository-star-history
+
+
 ## TODOs
 
 - Add column `is_private` and only crawl private repos if `--private` is passed

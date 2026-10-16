@@ -29,7 +29,9 @@ import Protolude (
   ($),
   (&),
   (/=),
+  (<$>),
   (<&>),
+  (<*>),
   (<>),
   (==),
  )
@@ -38,7 +40,7 @@ import Protolude qualified as P
 import Control.Arrow ((>>>))
 import Data.Aeson (
   Object,
-  Value (Object),
+  Value (Null, Object),
   eitherDecode,
   encode,
   object,
@@ -47,6 +49,7 @@ import Data.Aeson (
  )
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser, parseEither)
+import Data.ByteString.Lazy qualified as BSL
 import Data.Text qualified as T
 import Data.Time (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
@@ -70,7 +73,7 @@ import Text.RawString.QQ (r)
 
 import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Aeson.Key (fromText)
-import Types (GqlRes (..), Repo (..), SaveStrategy (..))
+import Types (GqlRes (..), Repo (..), SaveStrategy (..), StarWeek (..))
 import Utils (loadAirsWriteToken, loadDbEndpoint)
 
 
@@ -304,6 +307,156 @@ saveReposInAirsequel saveStrategy repos = do
         Just errs -> do
           putErrText "GraphQL errors while upserting repos:"
           putErrText $ show errs
+
+
+{-| Execute a GraphQL request against Airsequel
+and report HTTP and GraphQL errors.
+Returns the `data` field on success.
+-}
+execAirsequelQuery :: Manager -> Text -> Object -> IO (Maybe Value)
+execAirsequelQuery manager query variables = do
+  dbEndpoint <- loadDbEndpoint
+  airseqWriteToken <- loadAirsWriteToken
+  initialRequest <- parseRequest $ T.unpack dbEndpoint
+
+  response <-
+    httpLbs
+      (setRequestFields airseqWriteToken query variables initialRequest)
+      manager
+
+  if response.responseStatus.statusCode /= 200
+    then do
+      putErrText "Http Error:"
+      putErrText $ show response.responseBody
+      pure Nothing
+    else case response.responseBody & eitherDecode of
+      Left err -> do
+        putErrText "Error parsing GraphQL response:"
+        putErrLn err
+        pure Nothing
+      Right GqlRes{gqlErrors = Just errs} -> do
+        putErrText "GraphQL errors:"
+        putErrText $ show errs
+        pure Nothing
+      Right GqlRes{gqlData} ->
+        pure $ Just $ gqlData & fromMaybe Null
+
+
+{-| Load the stored star history of a repo as (week_utc, stars) pairs.
+Returns `Nothing` if it could not be loaded.
+-}
+loadStoredStarHistory ::
+  Manager -> Text -> Integer -> IO (Maybe [(Text, Integer)])
+loadStoredStarHistory manager tableName githubId = do
+  let
+    query =
+      [r|
+        query GetStarHistory($github_id: Int!) {
+          TABLE_NAME(filter: { github_id: { eq: $github_id } }) {
+            week_utc
+            stars
+          }
+        }
+      |]
+        & T.replace "TABLE_NAME" tableName
+
+    weeksParser :: Value -> Parser [(Text, Integer)]
+    weeksParser = \case
+      Object obj -> do
+        rows :: [Object] <- obj .: fromText tableName
+        rows & P.mapM (\row -> (,) <$> row .: "week_utc" <*> row .: "stars")
+      _ -> P.mempty
+
+  dataMb <-
+    execAirsequelQuery
+      manager
+      query
+      (KeyMap.fromList ["github_id" .= githubId])
+
+  case dataMb <&> parseEither weeksParser of
+    Nothing -> pure Nothing
+    Just (Left err) -> do
+      putErrText "Error parsing stored star history:"
+      putErrLn err
+      pure Nothing
+    Just (Right weeks) -> pure $ Just weeks
+
+
+{-| Replace the stored star history of a repo
+starting at the given `week_utc` (or completely if `Nothing`).
+Weeks without any stars are not stored,
+except for the newest one, which marks how far the history is complete.
+-}
+replaceStarHistory ::
+  Manager -> Text -> Integer -> Maybe Text -> [StarWeek] -> IO ()
+replaceStarHistory manager tableName githubId fromWeekMb weeks = do
+  let
+    deleteQuery =
+      ( case fromWeekMb of
+          Nothing ->
+            [r|
+              mutation DeleteStarHistory($github_id: Int!) {
+                delete_TABLE_NAME(filter: { github_id: { eq: $github_id } }) {
+                  affected_rows
+                }
+              }
+            |]
+          Just _ ->
+            [r|
+              mutation DeleteStarHistory($github_id: Int!, $from: String!) {
+                delete_TABLE_NAME(
+                  filter: {
+                    github_id: { eq: $github_id }
+                    week_utc: { gte: $from }
+                  }
+                ) {
+                  affected_rows
+                }
+              }
+            |]
+      )
+        & T.replace "TABLE_NAME" tableName
+
+    insertQuery =
+      [r|
+        mutation InsertStarHistory($objects: [TABLE_NAME_insert_input!]!) {
+          insert_TABLE_NAME(objects: $objects) {
+            affected_rows
+          }
+        }
+      |]
+        & T.replace "TABLE_NAME" tableName
+
+    weeksToStore = case weeks of
+      [] -> []
+      newestWeek : olderWeeks ->
+        newestWeek : (olderWeeks & filter (\week -> week.total /= 0))
+
+    objects =
+      weeksToStore <&> \week ->
+        object
+          [ "github_id" .= githubId
+          , "week_utc" .= iso8601Show week.weekStart
+          , "stars" .= week.total
+          , "days" .= (encode week.days & BSL.toStrict & P.decodeUtf8)
+          ]
+
+  deletedMb <-
+    execAirsequelQuery
+      manager
+      deleteQuery
+      ( KeyMap.fromList $
+          ("github_id" .= githubId)
+            : (fromWeekMb & P.maybeToList <&> ("from" .=))
+      )
+
+  when (isJust deletedMb P.&& P.not (P.null objects)) $ do
+    _ <-
+      execAirsequelQuery
+        manager
+        insertQuery
+        (KeyMap.fromList ["objects" .= objects])
+    pure ()
 
 
 -- | Delete the repo from Airsequel

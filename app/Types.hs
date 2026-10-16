@@ -8,6 +8,7 @@ import Protolude (
   Maybe (..),
   Show,
   Text,
+  fromInteger,
   mapM,
   pure,
   ($),
@@ -18,6 +19,7 @@ import Protolude (
 import Data.Aeson (FromJSON, Object, Value, withObject, (.:), (.:?))
 import Data.Aeson.Types (parseJSON)
 import Data.Time (UTCTime)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 
 
 {-| Corresponding SQL table:
@@ -220,3 +222,35 @@ instance FromJSON GqlRepoRes where
 
 data SaveStrategy = OverwriteRepo {tableName :: Text} | AddRepo {tableName :: Text}
   deriving (Show, Eq)
+
+
+{-| One week of a repo's star history.
+
+Corresponding SQL table:
+
+CREATE TABLE "star_history" (
+  "github_id"  INTEGER NOT NULL,
+  "week_utc"   TEXT_DATETIME NOT NULL,
+  "stars"      INTEGER NOT NULL,
+  "days"       TEXT_JSON_ARRAY
+)
+-}
+data StarWeek = StarWeek
+  { weekStart :: UTCTime
+  , total :: Integer
+  , days :: [Integer] -- Starting on Sunday
+  }
+  deriving (Show, Eq, Generic)
+
+
+instance FromJSON StarWeek where
+  parseJSON = withObject "StarWeek" $ \o -> do
+    weekSeconds :: Integer <- o .: "week"
+    total <- o .: "total"
+    days <- o .: "days"
+    pure
+      StarWeek
+        { weekStart = posixSecondsToUTCTime $ fromInteger weekSeconds
+        , total
+        , days
+        }
