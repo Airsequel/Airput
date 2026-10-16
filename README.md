@@ -70,6 +70,19 @@ CREATE TABLE "star_history" (
   https://docs.github.com/en/rest/activity/starring#get-repository-star-history
 
 
+## Environment Variables
+
+Variable              | Required for                     | Description
+----------------------|----------------------------------|-------------
+`AIRSEQUEL_API_TOKEN` | All commands                     | Airsequel API token with write access
+`AIRSEQUEL_DB_ID`     | `github-upload`, `github-search` | ID of the Airsequel database to save repos in (`upload` uses `--dbid` instead)
+`GITHUB_TOKEN`        | Optional                         | GitHub token for `github-upload` and `github-search`. Without it, requests are unauthenticated and limited to 60 per hour.
+
+A missing required variable is only detected when it is first needed
+(e.g. after the first batch of repos was loaded from GitHub),
+at which point the program exits with an error.
+
+
 ## TODOs
 
 - Add column `is_private` and only crawl private repos if `--private` is passed
